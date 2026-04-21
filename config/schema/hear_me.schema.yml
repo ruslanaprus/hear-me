@@ -1,0 +1,8 @@
+hear_me.settings:
+  type: config_object
+  label: 'Hear Me settings'
+  mapping:
+    endpoint:
+      type: string
+      label: 'Piper TTS endpoint URL'
+      description: 'The URL of the Piper TTS microservice endpoint.'

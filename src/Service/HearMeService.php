@@ -6,35 +6,49 @@ use GuzzleHttp\ClientInterface;
 use Drupal\media\Entity\Media;
 use Drupal\file\Entity\File;
 use Drupal\Core\DependencyInjection\ContainerInjectionInterface;
+use Drupal\Core\Config\ConfigFactoryInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 class HearMeService implements ContainerInjectionInterface {
 
   protected ClientInterface $httpClient;
-  protected string $endpoint;
+  protected ?string $endpoint;
 
-  public function __construct(ClientInterface $httpClient, string $endpoint) {
+  public function __construct(ClientInterface $httpClient, ConfigFactoryInterface $configFactory) {
     $this->httpClient = $httpClient;
-    $this->endpoint = $endpoint;
+    $config = $configFactory->get('hear_me.settings');
+    $this->endpoint = $config->get('endpoint');
   }
 
   public static function create(ContainerInterface $container): static {
     return new static(
       $container->get('http_client'),
-      $container->getParameter('hear_me.endpoint')
+      $container->get('config.factory')
     );
   }
 
   public function synthesize(string $text, string $lang = 'en'): ?Media {
-    $response = $this->httpClient->post($this->endpoint, [
-      'json' => ['text' => $text, 'lang' => $lang],
-    ]);
+    if (empty($this->endpoint)) {
+      return NULL;
+    }
+
+    try {
+      $response = $this->httpClient->request('POST', $this->endpoint, [
+        'json' => ['text' => $text, 'lang' => $lang],
+      ]);
+    } catch (\Exception $e) {
+      return NULL;
+    }
 
     if ($response->getStatusCode() === 200) {
       $audioContent = $response->getBody()->getContents();
 
       $fileSystem = \Drupal::service('file_system');
       $file = $fileSystem->saveData($audioContent, 'public://tts/' . uniqid() . '.wav', $fileSystem::EXISTS_REPLACE);
+
+      if (!$file) {
+        return NULL;
+      }
 
       $media = Media::create([
         'bundle' => 'audio',

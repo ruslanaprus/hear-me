@@ -5,3 +5,4 @@ core_version_requirement: ^11
 package: Accessibility
 dependencies:
   - drupal:media
+  - drupal:file

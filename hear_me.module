@@ -1,0 +1,19 @@
+<?php
+
+/**
+ * Implements hook_entity_insert().
+ *
+ * Automatically generates TTS audio when a new node is created.
+ */
+function hear_me_entity_insert(\Drupal\Core\Entity\EntityInterface $entity) {
+  if ($entity->getEntityTypeId() === 'node' && $entity->bundle() === 'article') {
+    $text = $entity->getTitle() . ' ' . $entity->body->value;
+
+    $ttsService = \Drupal::service('hear_me.service');
+    $media = $ttsService->synthesize($text, 'en');
+
+    if ($media) {
+      \Drupal::messenger()->addMessage('TTS audio generated and saved.');
+    }
+  }
+}

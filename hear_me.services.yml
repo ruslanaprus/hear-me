@@ -1,0 +1,6 @@
+services:
+  hear_me.service:
+    class: Drupal\hear_me\Service\HearMeService
+    arguments: ['@http_client', '%hear_me.endpoint%']
+parameters:
+  hear_me.endpoint: 'http://piper-service:5000/tts'

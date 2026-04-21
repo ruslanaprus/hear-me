@@ -1,0 +1,7 @@
+name: HearMe
+type: module
+description: Provides text-to-speech integration with Piper microservice for accessibility.
+core_version_requirement: ^11
+package: Accessibility
+dependencies:
+  - drupal:media

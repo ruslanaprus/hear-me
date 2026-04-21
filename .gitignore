@@ -1,0 +1,64 @@
+# -----------------------------
+# Composer dependencies
+# -----------------------------
+/vendor/
+/web/core/
+/web/vendor/
+
+# -----------------------------
+# Drupal user-generated content
+# -----------------------------
+/web/sites/*/files/
+/web/sites/*/private/
+
+# -----------------------------
+# Sensitive configuration
+# -----------------------------
+/web/sites/*/settings*.php
+/web/sites/*/services*.yml
+
+# -----------------------------
+# Drupal temporary files
+# -----------------------------
+/web/sites/*/translations/
+/web/sites/*/tmp/
+/web/sites/*/cache/
+
+# PHPUnit / testing
+/web/sites/simpletest/
+
+# -----------------------------
+# Drush
+# -----------------------------
+/drush/sites/*
+/drush/backups/
+/drush/cache/
+
+# -----------------------------
+# Environment / local overrides
+# -----------------------------
+.env
+.env.*
+!.env.example
+
+# -----------------------------
+# Logs & databases
+# -----------------------------
+*.log
+*.sql
+
+# -----------------------------
+# Composer / PHP tools
+# -----------------------------
+composer.phar
+
+# -----------------------------
+# IDE (IntelliJ / PhpStorm)
+# -----------------------------
+.idea/
+*.iml
+
+# -----------------------------
+# macOS
+# -----------------------------
+.DS_Store

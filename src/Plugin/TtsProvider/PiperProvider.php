@@ -4,6 +4,7 @@ namespace Drupal\hear_me\Plugin\TtsProvider;
 
 use Drupal\media\Entity\Media;
 use Drupal\file\Entity\File;
+use Drupal\Core\File\FileExists;
 use GuzzleHttp\ClientInterface;
 use Drupal\Core\Config\ConfigFactoryInterface;
 
@@ -31,21 +32,32 @@ class PiperProvider implements TtsProviderInterface {
       $audioContent = $response->getBody()->getContents();
 
       $fileSystem = \Drupal::service('file_system');
+      $uri = 'public://tts/' . md5($text . $lang . 'piper') . '.wav';
       $file = $fileSystem->saveData(
         $audioContent,
-        'public://tts/' . md5($text . $lang . 'piper') . '.wav',
-        $fileSystem::EXISTS_REPLACE
+        $uri,
+        FileExists::Replace
       );
 
       if (!$file) {
         return NULL;
       }
 
+      if ($file instanceof File) {
+        $fileEntity = $file;
+      }
+      else {
+        $fileEntity = File::create([
+          'uri' => $uri,
+        ]);
+        $fileEntity->save();
+      }
+
       $media = Media::create([
         'bundle' => 'audio',
         'name' => 'TTS (Piper): ' . substr($text, 0, 30),
         'field_media_audio_file' => [
-          'target_id' => $file->id(),
+          'target_id' => $fileEntity->id(),
         ],
       ]);
       $media->save();

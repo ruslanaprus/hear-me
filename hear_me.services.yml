@@ -10,10 +10,3 @@ services:
     arguments: [ '@http_client', '@config.factory' ]
     tags:
       - { name: hear_me.provider, provider_key: piper }
-
-  # Messenger handler
-  hear_me.message_handler.tts:
-    class: Drupal\hear_me\MessageHandler\TtsJobHandler
-    arguments: ['@hear_me.service']
-    tags:
-      - { name: messenger.message_handler }

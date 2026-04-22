@@ -6,11 +6,13 @@ use Symfony\Component\Messenger\MessageBusInterface;
 function hear_me_entity_insert(\Drupal\Core\Entity\EntityInterface $entity) {
   if ($entity->getEntityTypeId() === 'node' && $entity->bundle() === 'article') {
     $text = $entity->getTitle() . ' ' . $entity->body->value;
+    $lang = \Drupal::config('hear_me.settings')->get('default_lang') ?? 'en';
 
-    $config = \Drupal::config('hear_me.settings');
-    $lang = $config->get('default_lang') ?? 'en';
-
-    $bus = \Drupal::service('messenger.bus.default');
-    $bus->dispatch(new TtsJobMessage($entity->id(), $text, $lang));
+    $queue = \Drupal::queue('hear_me_tts');
+    $queue->createItem([
+      'nid' => $entity->id(),
+      'text' => $text,
+      'lang' => $lang,
+    ]);
   }
 }

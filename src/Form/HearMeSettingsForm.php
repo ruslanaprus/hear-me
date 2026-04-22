@@ -4,8 +4,21 @@ namespace Drupal\hear_me\Form;
 
 use Drupal\Core\Form\ConfigFormBase;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\hear_me\Service\HearMeService;
 
 class HearMeSettingsForm extends ConfigFormBase {
+
+  protected HearMeService $ttsService;
+
+  public function __construct(HearMeService $ttsService) {
+    $this->ttsService = $ttsService;
+  }
+
+  public static function create(\Symfony\Component\DependencyInjection\ContainerInterface $container) {
+    return new static(
+      $container->get('hear_me.service')
+    );
+  }
 
   protected function getEditableConfigNames() {
     return ['hear_me.settings'];
@@ -15,8 +28,30 @@ class HearMeSettingsForm extends ConfigFormBase {
     return 'hear_me_settings_form';
   }
 
+  protected function getProviderLanguages(string $providerKey): array {
+    $providers = $this->ttsService->getProviders();
+
+    if (isset($providers[$providerKey])) {
+      $langs = $providers[$providerKey]->getSupportedLanguages();
+
+      $labels = [
+        'en' => $this->t('English'),
+        'uk' => $this->t('Ukrainian'),
+      ];
+
+      $options = [];
+      foreach ($langs as $code) {
+        $options[$code] = $labels[$code] ?? strtoupper($code);
+      }
+      return $options;
+    }
+
+    return ['en' => $this->t('English')];
+  }
+
   public function buildForm(array $form, FormStateInterface $form_state) {
     $config = $this->config('hear_me.settings');
+    $providerKey = $form_state->getValue('provider') ?? $config->get('provider') ?? 'piper';
 
     $form['provider'] = [
       '#type' => 'select',
@@ -26,7 +61,7 @@ class HearMeSettingsForm extends ConfigFormBase {
         'google' => $this->t('Google Cloud TTS'),
         'coqui' => $this->t('Coqui TTS'),
       ],
-      '#default_value' => $config->get('provider') ?? 'piper',
+      '#default_value' => $providerKey,
     ];
 
     $form['endpoint'] = [
@@ -45,7 +80,7 @@ class HearMeSettingsForm extends ConfigFormBase {
     $form['default_lang'] = [
       '#type' => 'select',
       '#title' => $this->t('Default Language'),
-      '#options' => $this->getProviderLanguages($form_state->getValue('provider')),
+      '#options' => $this->getProviderLanguages($providerKey),
       '#default_value' => $config->get('default_lang') ?? 'en',
     ];
 

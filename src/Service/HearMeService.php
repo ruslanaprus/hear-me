@@ -18,7 +18,7 @@ class HearMeService {
   public static function create(ContainerInterface $container): static {
     return new static(
       $container->get('config.factory'),
-      $container->get('hear_me.providers') // service tag collection
+      $container->get('hear_me.providers')
     );
   }
 
@@ -50,4 +50,8 @@ class HearMeService {
         }
         return $provider->synthesize($text, $lang);
     }
+
+  public function getProviders(): array {
+    return $this->providers;
+  }
 }

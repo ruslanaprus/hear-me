@@ -19,9 +19,18 @@ class FilterTtsPlayback extends FilterBase {
 
   public function process($text, $langcode) {
     $pattern = '/<tts>(.*?)<\/tts>/s';
-    $replacement = '<button class="tts-play" data-text="$1" aria-label="Play text-to-speech" tabindex="0">🔊</button>';
-    $newText = preg_replace($pattern, $replacement, $text);
+    $newText = preg_replace_callback($pattern, function ($matches) {
+      $raw = $matches[1];
+
+      return '<span class="tts-text">' . $raw . '</span>
+              <button class="tts-play" data-text="' . $raw . '" aria-label="Play text-to-speech" tabindex="0">🔊</button>
+              <audio class="tts-audio" controls hidden></audio>';
+    }, $text);
 
     return new FilterProcessResult($newText);
+  }
+
+  public function tips($long = FALSE) {
+    return $this->t('Wrap text in <tts>…</tts> to display the text with a speaker button for playback.');
   }
 }

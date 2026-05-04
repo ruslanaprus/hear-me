@@ -6,3 +6,12 @@ hear_me.settings:
       type: string
       label: 'Piper TTS endpoint URL'
       description: 'The URL of the Piper TTS microservice endpoint.'
+    provider:
+      type: string
+      label: 'Active TTS provider key'
+    cache_enabled:
+      type: boolean
+      label: 'Enable file-based caching'
+    default_lang:
+      type: string
+      label: 'Default language code'

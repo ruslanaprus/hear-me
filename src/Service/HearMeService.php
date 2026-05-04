@@ -3,12 +3,13 @@
 namespace Drupal\hear_me\Service;
 
 use Drupal\Core\Config\ConfigFactoryInterface;
+use Drupal\media\Entity\Media;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 class HearMeService {
 
   protected ConfigFactoryInterface $configFactory;
-  protected array $providers;
+  protected iterable $providers;
 
   public function __construct(ConfigFactoryInterface $configFactory, iterable $providers) {
     $this->configFactory = $configFactory;
@@ -26,11 +27,12 @@ class HearMeService {
     $config = $this->configFactory->get('hear_me.settings');
     $providerKey = $config->get('provider') ?? 'piper';
 
-    if (!isset($this->providers[$providerKey])) {
+    $providers = $this->getProviders();
+    if (!isset($providers[$providerKey])) {
       return NULL;
     }
 
-    $provider = $this->providers[$providerKey];
+    $provider = $providers[$providerKey];
 
         if ($config->get('cache_enabled')) {
           $hash = md5($text . $lang . $providerKey);
@@ -52,6 +54,9 @@ class HearMeService {
     }
 
   public function getProviders(): array {
-    return $this->providers;
+    if ($this->providers instanceof \Traversable) {
+      return iterator_to_array($this->providers);
+    }
+    return (array) $this->providers;
   }
 }

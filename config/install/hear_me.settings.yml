@@ -1,1 +1,4 @@
-hear_me.endpoint: 'http://piper-service:5000/tts'
+endpoint: 'http://piper-service:5000/tts'
+provider: 'piper'
+cache_enabled: true
+default_lang: 'en'

@@ -1,0 +1,8 @@
+hear_me.tts:
+  path: '/hear-me/tts'
+  defaults:
+    _controller: '\Drupal\hear_me\Controller\HearMeController::synthesize'
+    _title: 'HearMe TTS'
+  requirements:
+    _permission: 'access content'
+  methods: [POST]

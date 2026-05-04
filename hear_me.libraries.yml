@@ -1,0 +1,7 @@
+frontend:
+  js:
+    js/hear_me.js: {}
+  dependencies:
+    - core/drupal
+    - core/jquery
+    - core/once

@@ -1,7 +1,22 @@
 <?php
 
+use Drupal\Core\File\FileSystemInterface;
 use Drupal\hear_me\Message\TtsJobMessage;
 use Symfony\Component\Messenger\MessageBusInterface;
+
+/**
+ * Implements hook_install().
+ *
+ * Creates the public://tts directory with correct permissions so the
+ * TTS Provider can write synthesised WAV files into it immediately.
+ */
+function hear_me_install() {
+  $dir = 'public://tts';
+  \Drupal::service('file_system')->prepareDirectory(
+    $dir,
+    FileSystemInterface::CREATE_DIRECTORY | FileSystemInterface::MODIFY_PERMISSIONS
+  );
+}
 
 function hear_me_entity_insert(\Drupal\Core\Entity\EntityInterface $entity) {
   if ($entity->getEntityTypeId() === 'node' && $entity->bundle() === 'article') {
@@ -16,3 +31,8 @@ function hear_me_entity_insert(\Drupal\Core\Entity\EntityInterface $entity) {
     ]);
   }
 }
+
+function hear_me_page_attachments(array &$attachments) {
+  $attachments['#attached']['library'][] = 'hear_me/frontend';
+}
+

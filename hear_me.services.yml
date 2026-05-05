@@ -2,11 +2,18 @@ services:
   # Central orchestrator service
   hear_me.service:
     class: Drupal\hear_me\Service\HearMeService
-    arguments: ['@config.factory', !tagged_iterator { tag: hear_me.provider, index_by: provider_key }]
+    arguments:
+      - '@config.factory'
+      - !tagged_iterator { tag: hear_me.provider, index_by: provider_key }
+      - '@file_system'
+      - '@entity_type.manager'
 
   # Piper provider
   hear_me.provider.piper:
     class: Drupal\hear_me\Plugin\TtsProvider\PiperProvider
-    arguments: [ '@http_client', '@config.factory' ]
+    arguments:
+      - '@http_client'
+      - '@config.factory'
+      - '@file_system'
     tags:
       - { name: hear_me.provider, provider_key: piper }

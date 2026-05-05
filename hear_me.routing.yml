@@ -6,3 +6,11 @@ hear_me.tts:
   requirements:
     _permission: 'access content'
   methods: [POST]
+
+hear_me.settings:
+  path: '/admin/config/media/hear-me'
+  defaults:
+    _form:  '\Drupal\hear_me\Form\HearMeSettingsForm'
+    _title: 'HearMe TTS Settings'
+  requirements:
+    _permission: 'administer site configuration'

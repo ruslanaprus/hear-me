@@ -21,7 +21,7 @@ function hear_me_install() {
 function hear_me_entity_insert(\Drupal\Core\Entity\EntityInterface $entity) {
   if ($entity->getEntityTypeId() === 'node' && $entity->bundle() === 'article') {
     $text = $entity->getTitle() . ' ' . $entity->body->value;
-    $lang = \Drupal::config('hear_me.settings')->get('default_lang') ?? 'en';
+    $lang = \Drupal::service('hear_me.service')->getDefaultLang();
 
     $queue = \Drupal::queue('hear_me_tts');
     $queue->createItem([

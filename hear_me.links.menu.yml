@@ -1,0 +1,6 @@
+hear_me.settings:
+  title: 'HearMe TTS'
+  description: 'Configure text-to-speech providers and settings.'
+  parent: system.admin_config_media
+  route_name: hear_me.settings
+  weight: 10

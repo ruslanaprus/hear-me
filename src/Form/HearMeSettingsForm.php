@@ -5,6 +5,7 @@ namespace Drupal\hear_me\Form;
 use Drupal\Core\Form\ConfigFormBase;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\hear_me\Service\HearMeService;
+use Symfony\Component\DependencyInjection\ContainerInterface;
 
 class HearMeSettingsForm extends ConfigFormBase {
 
@@ -14,87 +15,86 @@ class HearMeSettingsForm extends ConfigFormBase {
     $this->ttsService = $ttsService;
   }
 
-  public static function create(\Symfony\Component\DependencyInjection\ContainerInterface $container) {
+  public static function create(ContainerInterface $container): static {
     return new static(
       $container->get('hear_me.service')
     );
   }
 
-  protected function getEditableConfigNames() {
-    return ['hear_me.settings'];
+  protected function getEditableConfigNames(): array {
+    $names = ['hear_me.settings'];
+    foreach ($this->ttsService->getProviders() as $key => $provider) {
+      $names[] = 'hear_me.provider.' . $key;
+    }
+    return $names;
   }
 
-  public function getFormId() {
+  public function getFormId(): string {
     return 'hear_me_settings_form';
   }
 
-  protected function getProviderLanguages(string $providerKey): array {
-    $providers = $this->ttsService->getProviders();
+  public function buildForm(array $form, FormStateInterface $form_state): array {
+    $config      = $this->config('hear_me.settings');
+    $providerKey = $form_state->getValue('provider') ?? $config->get('provider') ?? 'piper';
+    $providers   = $this->ttsService->getProviders();
 
-    if (isset($providers[$providerKey])) {
-      $langs = $providers[$providerKey]->getSupportedLanguages();
-
-      $labels = [
-        'en' => $this->t('English'),
-        'uk' => $this->t('Ukrainian'),
-      ];
-
-      $options = [];
-      foreach ($langs as $code) {
-        $options[$code] = $labels[$code] ?? strtoupper($code);
-      }
-      return $options;
+    $providerOptions = [];
+    foreach ($providers as $key => $provider) {
+      $providerOptions[$key] = $provider->getLabel();
     }
 
-    return ['en' => $this->t('English')];
-  }
-
-  public function buildForm(array $form, FormStateInterface $form_state) {
-    $config = $this->config('hear_me.settings');
-    $providerKey = $form_state->getValue('provider') ?? $config->get('provider') ?? 'piper';
-
     $form['provider'] = [
-      '#type' => 'select',
-      '#title' => $this->t('Active TTS Provider'),
-      '#options' => [
-        'piper' => $this->t('Piper (self-hosted)'),
-        'google' => $this->t('Google Cloud TTS'),
-        'coqui' => $this->t('Coqui TTS'),
-      ],
+      '#type'          => 'select',
+      '#title'         => $this->t('Active TTS Provider'),
+      '#options'       => $providerOptions,
       '#default_value' => $providerKey,
-    ];
-
-    $form['endpoint'] = [
-      '#type' => 'textfield',
-      '#title' => $this->t('Provider Endpoint URL'),
-      '#default_value' => $config->get('endpoint') ?? '',
-      '#description' => $this->t('Base URL of the selected TTS provider.'),
+      '#ajax'          => [
+        'callback' => '::ajaxProviderSettings',
+        'wrapper'  => 'provider-settings-wrapper',
+        'effect'   => 'fade',
+      ],
     ];
 
     $form['cache_enabled'] = [
-      '#type' => 'checkbox',
-      '#title' => $this->t('Enable file-based caching'),
+      '#type'          => 'checkbox',
+      '#title'         => $this->t('Enable file-based caching'),
+      '#description'   => $this->t('Cache synthesised audio files to avoid re-generating identical requests.'),
       '#default_value' => $config->get('cache_enabled') ?? TRUE,
     ];
 
-    $form['default_lang'] = [
-      '#type' => 'select',
-      '#title' => $this->t('Default Language'),
-      '#options' => $this->getProviderLanguages($providerKey),
-      '#default_value' => $config->get('default_lang') ?? 'en',
+    $form['provider_settings'] = [
+      '#type'       => 'fieldset',
+      '#title'      => $this->t('Provider Settings'),
+      '#attributes' => ['id' => 'provider-settings-wrapper'],
     ];
+
+    if (isset($providers[$providerKey])) {
+      $providerConfig = $this->config('hear_me.provider.' . $providerKey)->getRawData();
+      $form['provider_settings'] = $providers[$providerKey]
+        ->buildConfigForm($form['provider_settings'], $providerConfig);
+    }
 
     return parent::buildForm($form, $form_state);
   }
 
-  public function submitForm(array &$form, FormStateInterface $form_state) {
+  public function ajaxProviderSettings(array &$form, FormStateInterface $form_state): array {
+    return $form['provider_settings'];
+  }
+
+  public function submitForm(array &$form, FormStateInterface $form_state): void {
+    $providerKey = $form_state->getValue('provider');
+    $providers   = $this->ttsService->getProviders();
+
     $this->configFactory->getEditable('hear_me.settings')
-      ->set('provider', $form_state->getValue('provider'))
-      ->set('endpoint', $form_state->getValue('endpoint'))
-      ->set('cache_enabled', $form_state->getValue('cache_enabled'))
-      ->set('default_lang', $form_state->getValue('default_lang'))
+      ->set('provider',      $providerKey)
+      ->set('cache_enabled', (bool) $form_state->getValue('cache_enabled'))
       ->save();
+
+    if (isset($providers[$providerKey])) {
+      $providers[$providerKey]->submitConfigForm($form, $form_state);
+    }
 
     parent::submitForm($form, $form_state);
   }
+
 }

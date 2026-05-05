@@ -42,6 +42,25 @@ class HearMeService {
   }
 
   /**
+   * Returns the supported language codes for the currently active provider.
+   *
+   * Delegates to the active provider's getSupportedLanguages()
+   *
+   * @return string[]
+   *   Array of language codes, e.g. ['en', 'uk'].
+   */
+  public function getSupportedLanguages(): array {
+    $providerKey = $this->configFactory->get('hear_me.settings')->get('provider') ?? 'piper';
+    $providers   = $this->getProviders();
+
+    if (isset($providers[$providerKey])) {
+      return $providers[$providerKey]->getSupportedLanguages();
+    }
+
+    return [$this->getDefaultLang()];
+  }
+
+  /**
    * Synthesizes text to speech using the configured provider.
    *
    * Checks the file-based cache before delegating to the provider.

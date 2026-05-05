@@ -34,5 +34,18 @@ function hear_me_entity_insert(\Drupal\Core\Entity\EntityInterface $entity) {
 
 function hear_me_page_attachments(array &$attachments) {
   $attachments['#attached']['library'][] = 'hear_me/frontend';
-}
 
+  $currentLangcode = \Drupal::languageManager()
+    ->getCurrentLanguage()
+    ->getId();
+
+  /** @var \Drupal\hear_me\Service\HearMeService $ttsService */
+  $ttsService    = \Drupal::service('hear_me.service');
+  $supportedLangs = $ttsService->getSupportedLanguages();
+  $shortCode      = strtolower(substr($currentLangcode, 0, 2));
+  $resolvedLang   = in_array($shortCode, $supportedLangs, TRUE)
+    ? $shortCode
+    : $ttsService->getDefaultLang();
+
+  $attachments['#attached']['drupalSettings']['hear_me']['default_lang'] = $resolvedLang;
+}

@@ -19,3 +19,9 @@ hear_me.provider.piper:
     default_lang:
       type: string
       label: 'Default language code'
+    supported_langs:
+      type: sequence
+      label: 'Supported language codes'
+      sequence:
+        type: string
+        label: 'Language code'

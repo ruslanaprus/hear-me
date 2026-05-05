@@ -25,7 +25,7 @@ class HearMeController extends ControllerBase {
   public function synthesize(Request $request): Response {
     $data = json_decode($request->getContent(), TRUE);
     $text = $data['text'] ?? '';
-    $lang = $data['lang'] ?? 'en';
+    $lang = $data['lang'] ?? $this->ttsService->getDefaultLang();
 
     if (!$text) {
       return new Response('Missing text', 400);

@@ -38,7 +38,7 @@ class HearMeQueueWorker extends QueueWorkerBase {
    */
   public function processItem($data) {
     $text = $data['text'] ?? '';
-    $lang = $data['lang'] ?? 'en';
+    $lang = $data['lang'] ?? $this->ttsService->getDefaultLang();
     $nid  = $data['nid'] ?? NULL;
 
     if (!$text) {

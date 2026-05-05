@@ -1,2 +1,5 @@
 endpoint: 'http://piper-service:5000/tts'
 default_lang: 'en'
+supported_langs:
+  - 'en'
+  - 'uk'

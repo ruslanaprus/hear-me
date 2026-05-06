@@ -194,6 +194,71 @@ class HearMeService {
   }
 
   /**
+   * Returns the raw audio bytes for the given text and language.
+   *
+   * Synthesizes if necessary (cache miss) and reads the resulting WAV file
+   * from the filesystem. Keeping this logic in the service means the
+   * controller stays free of any filesystem or entity knowledge.
+   *
+   * @param string $text
+   *   The text to synthesize.
+   * @param string $lang
+   *   Language code (e.g., 'en', 'uk').
+   *
+   * @return string|null
+   *   Raw WAV file contents, or NULL if synthesis or file-read failed.
+   */
+  public function getAudioBytes(string $text, string $lang): ?string {
+    $media = $this->synthesize($text, $lang);
+    if (!$media) {
+      return NULL;
+    }
+
+    $file    = $media->get('field_media_audio_file')->entity;
+    $uri     = $file->getFileUri();
+    $realpath = $this->fileSystem->realpath($uri);
+
+    if (!$realpath || !is_readable($realpath)) {
+      $this->logger->error(
+        'HearMe: audio file at "@uri" is not readable after synthesis.',
+        ['@uri' => $uri]
+      );
+      return NULL;
+    }
+
+    return file_get_contents($realpath);
+  }
+
+  /**
+   * Attaches a synthesized media entity to a node field.
+   *
+   * Reads the target field name from configuration so this logic is
+   * centralised and the queue worker stays free of config and entity
+   * manager knowledge beyond what the service already owns.
+   *
+   * @param int $nid
+   *   Node ID to attach the audio to.
+   * @param \Drupal\media\Entity\Media $media
+   *   The media entity to attach.
+   */
+  public function attachMediaToNode(int $nid, Media $media): void {
+    $fieldName = $this->configFactory->get('hear_me.settings')->get('tts_audio_field')
+      ?? 'field_tts_audio';
+
+    $node = $this->entityTypeManager->getStorage('node')->load($nid);
+    if (!$node || !$node->hasField($fieldName)) {
+      $this->logger->warning(
+        'HearMe: cannot attach audio to node @nid — node not found or field "@field" does not exist.',
+        ['@nid' => $nid, '@field' => $fieldName]
+      );
+      return;
+    }
+
+    $node->set($fieldName, $media->id());
+    $node->save();
+  }
+
+  /**
    * Returns all registered TTS provider plugins, keyed by provider_key.
    *
    * @return array<string, \Drupal\hear_me\Plugin\TtsProvider\TtsProviderInterface>

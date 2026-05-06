@@ -3,10 +3,10 @@
 namespace Drupal\hear_me\Controller;
 
 use Drupal\Core\Controller\ControllerBase;
+use Drupal\hear_me\Service\HearMeService;
+use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\DependencyInjection\ContainerInterface;
-use Drupal\hear_me\Service\HearMeService;
 
 class HearMeController extends ControllerBase {
 
@@ -18,7 +18,7 @@ class HearMeController extends ControllerBase {
 
   public static function create(ContainerInterface $container): static {
     return new static(
-      $container->get('hear_me.service')
+      $container->get('hear_me.service'),
     );
   }
 
@@ -31,19 +31,16 @@ class HearMeController extends ControllerBase {
       return new Response('Missing text', 400);
     }
 
-    $media = $this->ttsService->synthesize($text, $lang);
-    if (!$media) {
+    $bytes = $this->ttsService->getAudioBytes($text, $lang);
+    if ($bytes === NULL) {
       return new Response('Synthesis failed', 500);
     }
 
-    $file = $media->get('field_media_audio_file')->entity;
-    $uri = $file->getFileUri();
-    $realpath = \Drupal::service('file_system')->realpath($uri);
-
-    $response = new Response(file_get_contents($realpath));
+    $response = new Response($bytes);
     $response->headers->set('Content-Type', 'audio/wav');
     $response->headers->set('Content-Disposition', 'inline; filename="tts.wav"');
 
     return $response;
   }
+
 }

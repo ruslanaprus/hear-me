@@ -1,11 +1,10 @@
 <?php
 
-namespace Drupal\hear_me\Plugin\Queue\QueueWorker;
+namespace Drupal\hear_me\Plugin\Queue;
 
+use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
 use Drupal\Core\Queue\QueueWorkerBase;
-use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\hear_me\Service\HearMeService;
-use Drupal\Core\Config\ConfigFactoryInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
@@ -17,30 +16,38 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
  *   cron = {"time" = 30}
  * )
  */
-class HearMeQueueWorker extends QueueWorkerBase {
+class HearMeQueueWorker extends QueueWorkerBase implements ContainerFactoryPluginInterface {
 
   protected HearMeService $ttsService;
-  protected EntityTypeManagerInterface $entityTypeManager;
-  protected ConfigFactoryInterface $configFactory;
 
-  public function __construct(HearMeService $ttsService, EntityTypeManagerInterface $entityTypeManager, ConfigFactoryInterface $configFactory) {
-    $this->ttsService        = $ttsService;
-    $this->entityTypeManager = $entityTypeManager;
-    $this->configFactory     = $configFactory;
+  public function __construct(
+    array $configuration,
+    $plugin_id,
+    $plugin_definition,
+    HearMeService $ttsService,
+  ) {
+    parent::__construct($configuration, $plugin_id, $plugin_definition);
+    $this->ttsService = $ttsService;
   }
 
-  public static function create(ContainerInterface $container) {
+  public static function create(
+    ContainerInterface $container,
+    array $configuration,
+    $plugin_id,
+    $plugin_definition,
+  ): static {
     return new static(
+      $configuration,
+      $plugin_id,
+      $plugin_definition,
       $container->get('hear_me.service'),
-      $container->get('entity_type.manager'),
-      $container->get('config.factory')
     );
   }
 
   /**
    * {@inheritdoc}
    */
-  public function processItem($data) {
+  public function processItem($data): void {
     $text = $data['text'] ?? '';
     $lang = $data['lang'] ?? $this->ttsService->getDefaultLang();
     $nid  = $data['nid'] ?? NULL;
@@ -52,12 +59,8 @@ class HearMeQueueWorker extends QueueWorkerBase {
     $media = $this->ttsService->synthesize($text, $lang);
 
     if ($media && $nid) {
-      $node = $this->entityTypeManager->getStorage('node')->load($nid);
-      $fieldName = $this->configFactory->get('hear_me.settings')->get('tts_audio_field') ?? 'field_tts_audio';
-      if ($node && $node->hasField($fieldName)) {
-        $node->set($fieldName, $media->id());
-        $node->save();
-      }
+      $this->ttsService->attachMediaToNode((int) $nid, $media);
     }
   }
+
 }

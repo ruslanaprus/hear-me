@@ -22,7 +22,6 @@ class HearMeBlock extends BlockBase {
       '#attributes' => [
         'class' => ['hear-me-block'],
         'aria-label' => $this->t('Play text-to-speech for this page'),
-        'tabindex' => '0',
         'data-action' => 'tts-page',
       ],
       '#attached' => [

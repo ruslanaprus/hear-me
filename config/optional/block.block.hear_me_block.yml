@@ -1,0 +1,17 @@
+langcode: en
+status: true
+dependencies:
+  module:
+    - hear_me
+id: hear_me_block
+theme: ''
+region: content
+weight: -10
+provider: null
+plugin: hear_me_block
+settings:
+  id: hear_me_block
+  label: 'Listen to this page'
+  label_display: '0'
+  provider: hear_me
+visibility: {}

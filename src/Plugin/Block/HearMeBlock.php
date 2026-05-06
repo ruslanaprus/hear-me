@@ -16,13 +16,15 @@ class HearMeBlock extends BlockBase {
 
   public function build() {
     return [
-      '#type' => 'html_tag',
-      '#tag' => 'button',
-      '#value' => '🔊 ' . $this->t('Listen to this page'),
-      '#attributes' => [
-        'class' => ['hear-me-block'],
-        'aria-label' => $this->t('Play text-to-speech for this page'),
-        'data-action' => 'tts-page',
+      'button' => [
+        '#type' => 'html_tag',
+        '#tag' => 'button',
+        '#value' => '🔊 ' . $this->t('Listen to this page'),
+        '#attributes' => [
+          'class' => ['hear-me-block'],
+          'aria-label' => $this->t('Play text-to-speech for this page'),
+          'data-action' => 'tts-page',
+        ],
       ],
       '#attached' => [
         'library' => ['hear_me/frontend'],

@@ -111,24 +111,31 @@ class PiperProvider implements TtsProviderInterface {
     $audioContent = $response->getBody()->getContents();
     $uri          = $this->fileHelper->buildTtsUri($text, $lang, $this->getProviderKey());
 
-    $file = $this->fileSystem->saveData($audioContent, $uri, FileExists::Replace);
+    $savedUri = $this->fileSystem->saveData($audioContent, $uri, FileExists::Replace);
 
-    if (!$file) {
+    if (!$savedUri) {
       return NULL;
     }
 
-    if ($file instanceof File) {
-      $fileEntity = $file;
+    $existingFiles = \Drupal::entityTypeManager()
+      ->getStorage('file')
+      ->loadByProperties(['uri' => $savedUri]);
+
+    if ($existingFiles) {
+      $fileEntity = reset($existingFiles);
     }
     else {
-      $fileEntity = File::create(['uri' => $uri]);
+      $fileEntity = File::create([
+        'uri'    => $savedUri,
+        'status' => 1,
+      ]);
       $fileEntity->save();
     }
 
     $media = Media::create([
-      'bundle'                  => 'audio',
-      'name'                    => 'TTS (Piper) [' . $lang . ']: ' . md5($text),
-      'field_media_audio_file'  => [
+      'bundle'                 => 'audio',
+      'name'                   => 'TTS-' . $lang . '-' . md5($text),
+      'field_media_audio_file' => [
         'target_id' => $fileEntity->id(),
       ],
     ]);

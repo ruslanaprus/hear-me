@@ -5,6 +5,7 @@ namespace Drupal\hear_me\Service;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\File\FileSystemInterface;
+use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\media\Entity\Media;
 
 class HearMeService {
@@ -13,17 +14,62 @@ class HearMeService {
   protected iterable $providers;
   protected FileSystemInterface $fileSystem;
   protected EntityTypeManagerInterface $entityTypeManager;
+  protected TtsFileHelper $fileHelper;
+  protected \Psr\Log\LoggerInterface $logger;
 
   public function __construct(
     ConfigFactoryInterface $configFactory,
     iterable $providers,
     FileSystemInterface $fileSystem,
     EntityTypeManagerInterface $entityTypeManager,
+    TtsFileHelper $fileHelper,
+    LoggerChannelFactoryInterface $loggerFactory,
   ) {
     $this->configFactory     = $configFactory;
     $this->providers         = $providers;
     $this->fileSystem        = $fileSystem;
     $this->entityTypeManager = $entityTypeManager;
+    $this->fileHelper        = $fileHelper;
+    $this->logger            = $loggerFactory->get('hear_me');
+  }
+
+  /**
+   * Resolves the active TTS provider key from configuration.
+   *
+   * @throws \RuntimeException
+   *   Thrown when the 'provider' config value is absent or empty, which
+   *   indicates a broken or missing module configuration. The caller should
+   *   let this propagate so it is visible in logs rather than being swallowed
+   *   by a silent fallback.
+   *
+   * @return string
+   *   The provider key, e.g. 'piper'.
+   */
+  private function resolveProviderKey(): string {
+    $key = $this->configFactory->get('hear_me.settings')->get('provider');
+    if (!$key) {
+      throw new \RuntimeException(
+        'HearMe: the "provider" key is missing from hear_me.settings configuration. ' .
+        'Re-install the module or set the value at /admin/config/media/hear-me.'
+      );
+    }
+    return $key;
+  }
+
+  /**
+   * Builds the canonical file URI for a TTS audio file.
+   *
+   * Delegates to TtsFileHelper so callers can reach this via the central
+   * service without needing to inject TtsFileHelper separately.
+   *
+   * @param string $text
+   * @param string $lang
+   * @param string $providerKey
+   *
+   * @return string
+   */
+  public function buildTtsUri(string $text, string $lang, string $providerKey): string {
+    return $this->fileHelper->buildTtsUri($text, $lang, $providerKey);
   }
 
   /**
@@ -32,30 +78,55 @@ class HearMeService {
    * Reads from the active provider's own config namespace so that each
    * provider can independently define its default language.
    *
+   * @throws \RuntimeException
+   *   If the active provider key cannot be resolved from config.
+   *
    * @return string
    *   Language code, e.g. 'en'.
    */
   public function getDefaultLang(): string {
-    $providerKey = $this->configFactory->get('hear_me.settings')->get('provider') ?? 'piper';
-    return $this->configFactory->get('hear_me.provider.' . $providerKey)
-      ->get('default_lang') ?? 'en';
+    $providerKey = $this->resolveProviderKey();
+    $lang = $this->configFactory->get('hear_me.provider.' . $providerKey)->get('default_lang');
+    if (!$lang) {
+      throw new \RuntimeException(
+        sprintf(
+          'HearMe: the "default_lang" key is missing from hear_me.provider.%s configuration.',
+          $providerKey
+        )
+      );
+    }
+    return $lang;
   }
 
   /**
    * Returns the supported language codes for the currently active provider.
    *
-   * Delegates to the active provider's getSupportedLanguages()
+   * Delegates to the active provider's getSupportedLanguages(). If the
+   * configured provider key does not match any registered plugin, a warning
+   * is logged and an array containing only the default language is returned
+   * so that callers (e.g. the settings form language selector) degrade
+   * gracefully.
+   *
+   * @throws \RuntimeException
+   *   If the active provider key cannot be resolved from config.
    *
    * @return string[]
    *   Array of language codes, e.g. ['en', 'uk'].
    */
   public function getSupportedLanguages(): array {
-    $providerKey = $this->configFactory->get('hear_me.settings')->get('provider') ?? 'piper';
+    $providerKey = $this->resolveProviderKey();
     $providers   = $this->getProviders();
 
     if (isset($providers[$providerKey])) {
       return $providers[$providerKey]->getSupportedLanguages();
     }
+
+    $this->logger->warning(
+      'HearMe: provider "@key" is configured but not registered. ' .
+      'The module that provides it may have been disabled. ' .
+      'Update the provider at /admin/config/media/hear-me.',
+      ['@key' => $providerKey]
+    );
 
     return [$this->getDefaultLang()];
   }
@@ -65,28 +136,41 @@ class HearMeService {
    *
    * Checks the file-based cache before delegating to the provider.
    *
+   * Returns NULL (rather than throwing) on synthesis failure so that callers
+   * such as the controller and the queue worker can handle the absence of
+   * audio gracefully. Failures are logged as errors so they surface in the
+   * Drupal watchdog.
+   *
    * @param string $text
    *   The text to synthesize.
    * @param string $lang
    *   Language code (e.g., 'en', 'uk').
+   *
+   * @throws \RuntimeException
+   *   If the active provider key cannot be resolved from config.
    *
    * @return \Drupal\media\Entity\Media|null
    *   Media entity containing the audio file, or NULL on failure.
    */
   public function synthesize(string $text, string $lang): ?Media {
     $config      = $this->configFactory->get('hear_me.settings');
-    $providerKey = $config->get('provider') ?? 'piper';
+    $providerKey = $this->resolveProviderKey();
 
     $providers = $this->getProviders();
     if (!isset($providers[$providerKey])) {
+      $this->logger->error(
+        'HearMe: provider "@key" is configured but not registered; synthesis aborted. ' .
+        'The module that provides it may have been disabled. ' .
+        'Update the provider at /admin/config/media/hear-me.',
+        ['@key' => $providerKey]
+      );
       return NULL;
     }
 
     $provider = $providers[$providerKey];
 
     if ($config->get('cache_enabled')) {
-      $hash = md5($text . $lang . $providerKey);
-      $uri  = 'public://tts/' . $hash . '.wav';
+      $uri = $this->buildTtsUri($text, $lang, $providerKey);
 
       if (file_exists($this->fileSystem->realpath($uri))) {
         $files = $this->entityTypeManager

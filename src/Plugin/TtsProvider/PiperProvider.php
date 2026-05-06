@@ -7,6 +7,7 @@ use Drupal\Core\File\FileExists;
 use Drupal\Core\File\FileSystemInterface;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\file\Entity\File;
+use Drupal\hear_me\Service\TtsFileHelper;
 use Drupal\media\Entity\Media;
 use GuzzleHttp\ClientInterface;
 
@@ -15,15 +16,18 @@ class PiperProvider implements TtsProviderInterface {
   protected ClientInterface $httpClient;
   protected ConfigFactoryInterface $configFactory;
   protected FileSystemInterface $fileSystem;
+  protected TtsFileHelper $fileHelper;
 
   public function __construct(
     ClientInterface $httpClient,
     ConfigFactoryInterface $configFactory,
     FileSystemInterface $fileSystem,
+    TtsFileHelper $fileHelper,
   ) {
-    $this->httpClient = $httpClient;
+    $this->httpClient    = $httpClient;
     $this->configFactory = $configFactory;
-    $this->fileSystem = $fileSystem;
+    $this->fileSystem    = $fileSystem;
+    $this->fileHelper    = $fileHelper;
   }
 
   public function getProviderKey(): string {
@@ -89,7 +93,7 @@ class PiperProvider implements TtsProviderInterface {
 
   public function synthesize(string $text, string $lang): ?Media {
     $config   = $this->configFactory->get('hear_me.provider.piper');
-    $endpoint = $config->get('endpoint') ?? 'http://piper-service:5000/tts';
+    $endpoint = $config->get('endpoint');
 
     try {
       $response = $this->httpClient->request('POST', $endpoint, [
@@ -105,7 +109,7 @@ class PiperProvider implements TtsProviderInterface {
     }
 
     $audioContent = $response->getBody()->getContents();
-    $uri          = 'public://tts/' . md5($text . $lang . 'piper') . '.wav';
+    $uri          = $this->fileHelper->buildTtsUri($text, $lang, $this->getProviderKey());
 
     $file = $this->fileSystem->saveData($audioContent, $uri, FileExists::Replace);
 

@@ -34,14 +34,17 @@ class HearMeSettingsForm extends ConfigFormBase {
   }
 
   public function buildForm(array $form, FormStateInterface $form_state): array {
-    $config      = $this->config('hear_me.settings');
-    $providerKey = $form_state->getValue('provider') ?? $config->get('provider') ?? 'piper';
-    $providers   = $this->ttsService->getProviders();
+    $config    = $this->config('hear_me.settings');
+    $providers = $this->ttsService->getProviders();
 
     $providerOptions = [];
     foreach ($providers as $key => $provider) {
       $providerOptions[$key] = $provider->getLabel();
     }
+
+    $providerKey = $form_state->getValue('provider')
+      ?? $config->get('provider')
+      ?? array_key_first($providerOptions);
 
     $form['provider'] = [
       '#type'          => 'select',
@@ -60,6 +63,14 @@ class HearMeSettingsForm extends ConfigFormBase {
       '#title'         => $this->t('Enable file-based caching'),
       '#description'   => $this->t('Cache synthesised audio files to avoid re-generating identical requests.'),
       '#default_value' => $config->get('cache_enabled') ?? TRUE,
+    ];
+
+    $form['tts_audio_field'] = [
+      '#type'          => 'textfield',
+      '#title'         => $this->t('TTS Audio Field'),
+      '#description'   => $this->t('Machine name of the node field used to attach generated TTS audio media (e.g. <code>field_tts_audio</code>).'),
+      '#default_value' => $config->get('tts_audio_field') ?? 'field_tts_audio',
+      '#required'      => TRUE,
     ];
 
     $form['provider_settings'] = [
@@ -86,8 +97,9 @@ class HearMeSettingsForm extends ConfigFormBase {
     $providers   = $this->ttsService->getProviders();
 
     $this->configFactory->getEditable('hear_me.settings')
-      ->set('provider',      $providerKey)
-      ->set('cache_enabled', (bool) $form_state->getValue('cache_enabled'))
+      ->set('provider',        $providerKey)
+      ->set('cache_enabled',   (bool) $form_state->getValue('cache_enabled'))
+      ->set('tts_audio_field', $form_state->getValue('tts_audio_field'))
       ->save();
 
     if (isset($providers[$providerKey])) {

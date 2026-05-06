@@ -8,6 +8,9 @@ hear_me.settings:
     cache_enabled:
       type: boolean
       label: 'Enable file-based caching'
+    tts_audio_field:
+      type: string
+      label: 'Machine name of the node field used to attach TTS audio media'
 
 hear_me.provider.piper:
   type: config_object

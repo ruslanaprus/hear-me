@@ -1,4 +1,8 @@
 services:
+  # Shared file-path utility
+  hear_me.file_helper:
+    class: Drupal\hear_me\Service\TtsFileHelper
+
   # Central orchestrator service
   hear_me.service:
     class: Drupal\hear_me\Service\HearMeService
@@ -7,6 +11,8 @@ services:
       - !tagged_iterator { tag: hear_me.provider, index_by: provider_key }
       - '@file_system'
       - '@entity_type.manager'
+      - '@hear_me.file_helper'
+      - '@logger.factory'
 
   # Piper provider
   hear_me.provider.piper:
@@ -15,5 +21,6 @@ services:
       - '@http_client'
       - '@config.factory'
       - '@file_system'
+      - '@hear_me.file_helper'
     tags:
       - { name: hear_me.provider, provider_key: piper }

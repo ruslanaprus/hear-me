@@ -1,2 +1,4 @@
 provider: 'piper'
 cache_enabled: true
+tts_audio_field: 'field_tts_audio'
+

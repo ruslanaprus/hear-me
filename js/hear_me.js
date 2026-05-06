@@ -6,7 +6,10 @@
           const text   = $(this).data('text');
           const lang   = $(this).data('lang')
                            || (settings.hear_me && settings.hear_me.default_lang)
-                           || 'en';
+                           || (function () {
+                             console.warn('HearMe: drupalSettings.hear_me.default_lang is not set; falling back to "en". Check that the hear_me module is installed and hook_page_attachments is running.');
+                             return 'en';
+                           }());
           const audioEl = $(this).siblings('.tts-audio')[0];
 
           if (!audioEl) {

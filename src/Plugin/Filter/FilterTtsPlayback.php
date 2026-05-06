@@ -2,6 +2,7 @@
 
 namespace Drupal\hear_me\Plugin\Filter;
 
+use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
 use Drupal\filter\Plugin\FilterBase;
 use Drupal\filter\FilterProcessResult;
 use Drupal\hear_me\Service\HearMeService;
@@ -17,34 +18,14 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
  *   type = Drupal\filter\Plugin\FilterInterface::TYPE_MARKUP_LANGUAGE
  * )
  */
-class FilterTtsPlayback extends FilterBase {
+class FilterTtsPlayback extends FilterBase implements ContainerFactoryPluginInterface {
 
   protected HearMeService $ttsService;
 
-  /**
-   * {@inheritdoc}
-   *
-   * Overrides the parent constructor to inject HearMeService.
-   * FilterBase expects ($configuration, $plugin_id, $plugin_definition),
-   * so those are passed through to the parent unchanged.
-   */
-  public function __construct(
-    array $configuration,
-    $plugin_id,
-    $plugin_definition,
-    HearMeService $ttsService,
-  ) {
-    parent::__construct($configuration, $plugin_id, $plugin_definition);
-    $this->ttsService = $ttsService;
-  }
-
   public static function create(ContainerInterface $container, array $configuration, $plugin_id, $plugin_definition): static {
-    return new static(
-      $configuration,
-      $plugin_id,
-      $plugin_definition,
-      $container->get('hear_me.service'),
-    );
+    $instance = parent::create($container, $configuration, $plugin_id, $plugin_definition);
+    $instance->ttsService = $container->get('hear_me.service');
+    return $instance;
   }
 
   public function process($text, $langcode) {

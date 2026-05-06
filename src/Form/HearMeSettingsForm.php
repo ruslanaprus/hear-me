@@ -2,6 +2,8 @@
 
 namespace Drupal\hear_me\Form;
 
+use Drupal\Core\Config\ConfigFactoryInterface;
+use Drupal\Core\Config\TypedConfigManagerInterface;
 use Drupal\Core\Form\ConfigFormBase;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\hear_me\Service\HearMeService;
@@ -11,13 +13,20 @@ class HearMeSettingsForm extends ConfigFormBase {
 
   protected HearMeService $ttsService;
 
-  public function __construct(HearMeService $ttsService) {
+  public function __construct(
+    ConfigFactoryInterface $configFactory,
+    TypedConfigManagerInterface $typedConfigManager,
+    HearMeService $ttsService,
+  ) {
+    parent::__construct($configFactory, $typedConfigManager);
     $this->ttsService = $ttsService;
   }
 
   public static function create(ContainerInterface $container): static {
     return new static(
-      $container->get('hear_me.service')
+      $container->get('config.factory'),
+      $container->get('config.typed'),
+      $container->get('hear_me.service'),
     );
   }
 

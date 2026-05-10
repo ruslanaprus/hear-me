@@ -9,6 +9,7 @@ use Drupal\Core\File\FileSystemInterface;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Language\LanguageManagerInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
+use Drupal\Core\StringTranslation\StringTranslationTrait;
 use Drupal\file\Entity\File;
 use Drupal\hear_me\Service\TtsFileHelper;
 use Drupal\media\Entity\Media;
@@ -19,6 +20,8 @@ use GuzzleHttp\Exception\GuzzleException;
  * TTS provider that synthesises audio via a self-hosted Piper service.
  */
 class PiperProvider implements TtsProviderInterface {
+
+  use StringTranslationTrait;
 
   protected ClientInterface $httpClient;
   protected ConfigFactoryInterface $configFactory;
@@ -80,17 +83,17 @@ class PiperProvider implements TtsProviderInterface {
   public function buildConfigForm(array $form, array $config): array {
     $form['endpoint'] = [
       '#type'          => 'textfield',
-      '#title'         => t('Piper Endpoint URL'),
+      '#title'         => $this->t('Piper Endpoint URL'),
       '#default_value' => $config['endpoint'] ?? 'http://piper-service:5000/tts',
-      '#description'   => t('Base URL of the Piper TTS microservice.'),
+      '#description'   => $this->t('Base URL of the Piper TTS microservice.'),
       '#required'      => TRUE,
     ];
 
     $form['supported_langs'] = [
       '#type'          => 'textfield',
-      '#title'         => t('Supported Language Codes'),
+      '#title'         => $this->t('Supported Language Codes'),
       '#default_value' => implode(', ', $config['supported_langs'] ?? ['en']),
-      '#description'   => t('Comma-separated list of language codes this provider supports (e.g. <code>en, uk</code>). Must match the voice files installed on the Piper service.'),
+      '#description'   => $this->t('Comma-separated list of language codes this provider supports (e.g. <code>en, uk</code>). Must match the voice files installed on the Piper service.'),
       '#required'      => TRUE,
     ];
 
@@ -105,7 +108,7 @@ class PiperProvider implements TtsProviderInterface {
 
     $form['default_lang'] = [
       '#type'          => 'select',
-      '#title'         => t('Default Language'),
+      '#title'         => $this->t('Default Language'),
       '#options'       => $langOptions,
       '#default_value' => $config['default_lang'] ?? 'en',
     ];

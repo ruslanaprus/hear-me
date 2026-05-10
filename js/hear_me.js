@@ -12,16 +12,36 @@
   /**
    * POST text to the TTS endpoint and play the returned audio blob.
    *
+   * Fetches a Drupal CSRF token first so the route's _csrf_token requirement
+   * is satisfied. The token is cached per page-load via a module-level
+   * variable so repeated button clicks only incur one extra request.
+   *
    * @param {string} text - Plain text to synthesise.
    * @param {string} lang - BCP-47 language code.
    * @param {HTMLAudioElement} audioEl - The <audio> element to play into.
    */
+  var csrfTokenPromise = null;
+
+  function getCsrfToken() {
+    if (!csrfTokenPromise) {
+      csrfTokenPromise = fetch('/session/token')
+        .then(function (res) { return res.text(); });
+    }
+    return csrfTokenPromise;
+  }
+
   function fetchAndPlay(text, lang, audioEl) {
-    fetch('/hear-me/tts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text, lang: lang }),
-    })
+    getCsrfToken()
+      .then(function (token) {
+        return fetch('/hear-me/tts', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': token,
+          },
+          body: JSON.stringify({ text: text, lang: lang }),
+        });
+      })
       .then(function (res) {
         if (!res.ok) {
           throw new Error('TTS request failed with status ' + res.status);

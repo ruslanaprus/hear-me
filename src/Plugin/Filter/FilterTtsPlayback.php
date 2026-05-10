@@ -3,23 +3,36 @@
 namespace Drupal\hear_me\Plugin\Filter;
 
 use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
-use Drupal\filter\Plugin\FilterBase;
+use Drupal\filter\Attribute\Filter;
 use Drupal\filter\FilterProcessResult;
+use Drupal\filter\Plugin\FilterBase;
+use Drupal\filter\Plugin\FilterInterface;
+use Drupal\Core\StringTranslation\TranslatableMarkup;
 use Drupal\hear_me\Service\HearMeService;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
- * Provides a filter to transform text into TTS playback buttons.
+ * Transforms <tts>…</tts> markup into an inline TTS playback button.
  *
- * @Filter(
- *   id = "filter_tts_playback",
- *   title = @Translation("TTS Playback Button"),
- *   description = @Translation("Transforms marked text into a TTS playback button."),
- *   type = Drupal\filter\Plugin\FilterInterface::TYPE_MARKUP_LANGUAGE
- * )
+ * This filter receives existing HTML content (from the CKEditor body field)
+ * and irreversibly replaces every <tts> element with three sibling elements:
+ *   - a <span> that preserves the original visible text,
+ *   - a <button> that triggers TTS playback via hear_me.js,
+ *   - a hidden <audio> element used by the JS to play back synthesised audio.
  */
+#[Filter(
+  id: 'filter_tts_playback',
+  title: new TranslatableMarkup('TTS Playback Button'),
+  description: new TranslatableMarkup('Transforms <tts>…</tts> marked text into an inline TTS playback button.'),
+  type: FilterInterface::TYPE_TRANSFORM_IRREVERSIBLE,
+)]
 class FilterTtsPlayback extends FilterBase implements ContainerFactoryPluginInterface {
 
+  /**
+   * The HearMe TTS service, used to resolve the effective language.
+   *
+   * @var \Drupal\hear_me\Service\HearMeService
+   */
   protected HearMeService $ttsService;
 
   public static function create(ContainerInterface $container, array $configuration, $plugin_id, $plugin_definition): static {
@@ -28,7 +41,7 @@ class FilterTtsPlayback extends FilterBase implements ContainerFactoryPluginInte
     return $instance;
   }
 
-  public function process($text, $langcode) {
+  public function process($text, $langcode): FilterProcessResult {
     $effectiveLang = ($langcode && $langcode !== 'und')
       ? $langcode
       : $this->ttsService->getDefaultLang();
@@ -49,7 +62,7 @@ class FilterTtsPlayback extends FilterBase implements ContainerFactoryPluginInte
     return new FilterProcessResult($newText);
   }
 
-  public function tips($long = FALSE) {
+  public function tips($long = FALSE): string {
     return $this->t('Wrap text in <tts>…</tts> to display the text with a speaker button for playback.');
   }
 

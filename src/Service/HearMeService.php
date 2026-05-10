@@ -215,6 +215,13 @@ class HearMeService {
     }
 
     $file    = $media->get('field_media_audio_file')->entity;
+    if (!$file) {
+      $this->logger->error(
+        'HearMe: media entity @mid has no referenced file entity on field_media_audio_file.',
+        ['@mid' => $media->id()]
+      );
+      return NULL;
+    }
     $uri     = $file->getFileUri();
     $realpath = $this->fileSystem->realpath($uri);
 

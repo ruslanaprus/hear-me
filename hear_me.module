@@ -1,6 +1,7 @@
 <?php
 
 use Drupal\Core\File\FileSystemInterface;
+use Drupal\hear_me\Service\TtsFileHelper;
 
 /**
  * Implements hook_install().
@@ -14,6 +15,123 @@ function hear_me_install() {
     $dir,
     FileSystemInterface::CREATE_DIRECTORY | FileSystemInterface::MODIFY_PERMISSIONS
   );
+}
+
+/**
+ * Implements hook_uninstall().
+ *
+ * Cleans up everything the module created so that a fresh reinstall succeeds:
+ *
+ *  1. Deletes only TTS-generated audio files (those stored under
+ *     public://tts/) together with their Drupal-managed file records and the
+ *     media entities that reference them. All other media on the site is left
+ *     untouched.
+ *  2. Deletes the field instance, field storage, and media type that were
+ *     imported from config/install/ on installation.
+ *  3. Deletes the module's own configuration objects (settings and per-
+ *     provider config).
+ *
+ * Order matters: dependent config must be deleted before the config it depends
+ * on (field instance → field storage → media type).
+ */
+function hear_me_uninstall() {
+  $entityTypeManager = \Drupal::entityTypeManager();
+  $fileSystem        = \Drupal::service('file_system');
+  $configFactory     = \Drupal::configFactory();
+  $logger            = \Drupal::logger('hear_me');
+
+  // -------------------------------------------------------------------------
+  // Step 1 – Delete TTS-generated media entities, their managed file records,
+  //           and the actual WAV files from public://tts/.
+  //
+  // We scope the deletion to files whose URI starts with the canonical TTS
+  // base path ('public://tts/').  This means we never touch audio files that
+  // were uploaded independently by editors or any other module.
+  // -------------------------------------------------------------------------
+  $ttsUriPrefix = TtsFileHelper::TTS_URI_BASE;
+
+  $fileStorage = $entityTypeManager->getStorage('file');
+  $ttsFileIds  = $fileStorage->getQuery()
+    ->condition('uri', $ttsUriPrefix . '%', 'LIKE')
+    ->accessCheck(FALSE)
+    ->execute();
+
+  if (!empty($ttsFileIds)) {
+    $mediaStorage = $entityTypeManager->getStorage('media');
+
+    foreach ($ttsFileIds as $fid) {
+      $mediaEntities = $mediaStorage->loadByProperties([
+        'field_media_audio_file' => $fid,
+      ]);
+      if (!empty($mediaEntities)) {
+        $mediaStorage->delete($mediaEntities);
+      }
+    }
+
+    $fileEntities = $fileStorage->loadMultiple($ttsFileIds);
+    $fileStorage->delete($fileEntities);
+
+    $logger->info(
+      'HearMe uninstall: deleted @count TTS media/file record(s).',
+      ['@count' => count($ttsFileIds)]
+    );
+  }
+
+  $ttsRealDir = $fileSystem->realpath('public://tts');
+  if ($ttsRealDir && is_dir($ttsRealDir)) {
+    $wavFiles = glob($ttsRealDir . DIRECTORY_SEPARATOR . '*.wav') ?: [];
+    foreach ($wavFiles as $wavFile) {
+      if (@unlink($wavFile)) {
+        $logger->info('HearMe uninstall: removed file @file.', ['@file' => $wavFile]);
+      }
+      else {
+        $logger->warning('HearMe uninstall: could not remove file @file.', ['@file' => $wavFile]);
+      }
+    }
+    @rmdir($ttsRealDir);
+  }
+
+  // -------------------------------------------------------------------------
+  // Step 2 – Delete config entities created from config/install/.
+  //
+  // Dependency order (most-dependent first):
+  //   field.field   → depends on field.storage and media.type
+  //   field.storage → depends on media.type
+  //   media.type    → no hear_me dependencies
+  // -------------------------------------------------------------------------
+  $installConfigs = [
+    'field.field.media.audio.field_media_audio_file',
+    'field.storage.media.field_media_audio_file',
+    'media.type.audio',
+  ];
+
+  foreach ($installConfigs as $configName) {
+    $config = $configFactory->getEditable($configName);
+    if (!$config->isNew()) {
+      $config->delete();
+      $logger->info('HearMe uninstall: deleted config @name.', ['@name' => $configName]);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Step 3 – Delete the module's own simple configuration objects.
+  //
+  // hear_me.settings and hear_me.provider.* are plain config objects (not
+  // config entities), so they do not have inter-dependencies and can be
+  // deleted in any order.
+  // -------------------------------------------------------------------------
+  $moduleConfigs = [
+    'hear_me.settings',
+    'hear_me.provider.piper',
+  ];
+
+  foreach ($moduleConfigs as $configName) {
+    $config = $configFactory->getEditable($configName);
+    if (!$config->isNew()) {
+      $config->delete();
+      $logger->info('HearMe uninstall: deleted config @name.', ['@name' => $configName]);
+    }
+  }
 }
 
 function hear_me_entity_insert(\Drupal\Core\Entity\EntityInterface $entity) {

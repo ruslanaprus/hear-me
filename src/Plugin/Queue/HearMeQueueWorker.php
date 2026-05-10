@@ -3,19 +3,20 @@
 namespace Drupal\hear_me\Plugin\Queue;
 
 use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
+use Drupal\Core\Queue\Attribute\QueueWorker;
 use Drupal\Core\Queue\QueueWorkerBase;
+use Drupal\Core\StringTranslation\TranslatableMarkup;
 use Drupal\hear_me\Service\HearMeService;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
  * Processes queued TTS synthesis jobs.
- *
- * @QueueWorker(
- *   id = "hear_me_tts",
- *   title = @Translation("HearMe TTS Queue Worker"),
- *   cron = {"time" = 30}
- * )
  */
+#[QueueWorker(
+  id: 'hear_me_tts',
+  title: new TranslatableMarkup('HearMe TTS Queue Worker'),
+  cron: ['time' => 30],
+)]
 class HearMeQueueWorker extends QueueWorkerBase implements ContainerFactoryPluginInterface {
 
   protected HearMeService $ttsService;

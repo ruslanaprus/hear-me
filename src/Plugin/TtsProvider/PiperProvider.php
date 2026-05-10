@@ -3,31 +3,65 @@
 namespace Drupal\hear_me\Plugin\TtsProvider;
 
 use Drupal\Core\Config\ConfigFactoryInterface;
+use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\File\FileExists;
 use Drupal\Core\File\FileSystemInterface;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Language\LanguageManagerInterface;
+use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\file\Entity\File;
 use Drupal\hear_me\Service\TtsFileHelper;
 use Drupal\media\Entity\Media;
 use GuzzleHttp\ClientInterface;
+use GuzzleHttp\Exception\GuzzleException;
 
+/**
+ * TTS provider that synthesises audio via a self-hosted Piper service.
+ */
 class PiperProvider implements TtsProviderInterface {
 
   protected ClientInterface $httpClient;
   protected ConfigFactoryInterface $configFactory;
   protected FileSystemInterface $fileSystem;
   protected TtsFileHelper $fileHelper;
+  protected EntityTypeManagerInterface $entityTypeManager;
+  protected LanguageManagerInterface $languageManager;
+  protected $logger;
 
+  /**
+   * Constructs a PiperProvider instance.
+   *
+   * @param \GuzzleHttp\ClientInterface $http_client
+   *   The HTTP client.
+   * @param \Drupal\Core\Config\ConfigFactoryInterface $config_factory
+   *   The config factory.
+   * @param \Drupal\Core\File\FileSystemInterface $file_system
+   *   The file system service.
+   * @param \Drupal\hear_me\Service\TtsFileHelper $file_helper
+   *   The TTS file URI helper.
+   * @param \Drupal\Core\Entity\EntityTypeManagerInterface $entity_type_manager
+   *   The entity type manager.
+   * @param \Drupal\Core\Language\LanguageManagerInterface $language_manager
+   *   The language manager.
+   * @param \Drupal\Core\Logger\LoggerChannelFactoryInterface $logger_factory
+   *   The logger channel factory.
+   */
   public function __construct(
-    ClientInterface $httpClient,
-    ConfigFactoryInterface $configFactory,
-    FileSystemInterface $fileSystem,
-    TtsFileHelper $fileHelper,
+    ClientInterface $http_client,
+    ConfigFactoryInterface $config_factory,
+    FileSystemInterface $file_system,
+    TtsFileHelper $file_helper,
+    EntityTypeManagerInterface $entity_type_manager,
+    LanguageManagerInterface $language_manager,
+    LoggerChannelFactoryInterface $logger_factory,
   ) {
-    $this->httpClient    = $httpClient;
-    $this->configFactory = $configFactory;
-    $this->fileSystem    = $fileSystem;
-    $this->fileHelper    = $fileHelper;
+    $this->httpClient        = $http_client;
+    $this->configFactory     = $config_factory;
+    $this->fileSystem        = $file_system;
+    $this->fileHelper        = $file_helper;
+    $this->entityTypeManager = $entity_type_manager;
+    $this->languageManager   = $language_manager;
+    $this->logger            = $logger_factory->get('hear_me');
   }
 
   public function getProviderKey(): string {
@@ -61,13 +95,12 @@ class PiperProvider implements TtsProviderInterface {
     ];
 
     $langOptions = [];
-    $drupalLangs = \Drupal::languageManager()->getLanguages();
+    $drupalLangs = $this->languageManager->getLanguages();
     foreach ($this->getSupportedLanguages() as $code) {
       $shortCode = strtolower(substr($code, 0, 2));
-      $label = isset($drupalLangs[$code])
+      $langOptions[$code] = isset($drupalLangs[$code])
         ? $drupalLangs[$code]->getName()
         : (isset($drupalLangs[$shortCode]) ? $drupalLangs[$shortCode]->getName() : strtoupper($code));
-      $langOptions[$code] = $label;
     }
 
     $form['default_lang'] = [
@@ -91,6 +124,14 @@ class PiperProvider implements TtsProviderInterface {
       ->save();
   }
 
+  /**
+   * Calls the Piper TTS microservice, saves the returned audio to the managed
+   * file system, and wraps it in a Media entity.
+   *
+   * Returns NULL on any failure; all failures are logged to the hear_me
+   * channel so problems are visible in the Drupal watchdog without crashing
+   * the calling code.
+   */
   public function synthesize(string $text, string $lang): ?Media {
     $config   = $this->configFactory->get('hear_me.provider.piper');
     $endpoint = $config->get('endpoint');
@@ -100,26 +141,45 @@ class PiperProvider implements TtsProviderInterface {
         'json' => ['text' => $text, 'lang' => $lang],
       ]);
     }
-    catch (\Exception $e) {
+    catch (GuzzleException $e) {
+      $this->logger->error(
+        'Piper TTS HTTP request failed (endpoint: @endpoint, lang: @lang): @message',
+        [
+          '@endpoint' => $endpoint,
+          '@lang'     => $lang,
+          '@message'  => $e->getMessage(),
+        ]
+      );
       return NULL;
     }
 
-    if ($response->getStatusCode() !== 200) {
+    $statusCode = $response->getStatusCode();
+    if ($statusCode !== 200) {
+      $this->logger->warning(
+        'Piper TTS returned unexpected HTTP @code (endpoint: @endpoint, lang: @lang).',
+        [
+          '@code'     => $statusCode,
+          '@endpoint' => $endpoint,
+          '@lang'     => $lang,
+        ]
+      );
       return NULL;
     }
 
     $audioContent = $response->getBody()->getContents();
     $uri          = $this->fileHelper->buildTtsUri($text, $lang, $this->getProviderKey());
-
     $savedUri = $this->fileSystem->saveData($audioContent, $uri, FileExists::Replace);
 
     if (!$savedUri) {
+      $this->logger->error(
+        'Piper TTS: failed to save audio data to @uri.',
+        ['@uri' => $uri]
+      );
       return NULL;
     }
 
-    $existingFiles = \Drupal::entityTypeManager()
-      ->getStorage('file')
-      ->loadByProperties(['uri' => $savedUri]);
+    $fileStorage   = $this->entityTypeManager->getStorage('file');
+    $existingFiles = $fileStorage->loadByProperties(['uri' => $savedUri]);
 
     if ($existingFiles) {
       $fileEntity = reset($existingFiles);

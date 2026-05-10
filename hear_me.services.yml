@@ -22,5 +22,8 @@ services:
       - '@config.factory'
       - '@file_system'
       - '@hear_me.file_helper'
+      - '@entity_type.manager'
+      - '@language_manager'
+      - '@logger.factory'
     tags:
       - { name: hear_me.provider, provider_key: piper }

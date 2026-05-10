@@ -60,16 +60,33 @@ function hear_me_uninstall() {
     $mediaStorage = $entityTypeManager->getStorage('media');
 
     foreach ($ttsFileIds as $fid) {
-      $mediaEntities = $mediaStorage->loadByProperties([
-        'field_media_audio_file' => $fid,
-      ]);
-      if (!empty($mediaEntities)) {
-        $mediaStorage->delete($mediaEntities);
+      try {
+        $mediaEntities = $mediaStorage->loadByProperties([
+          'field_media_audio_file' => $fid,
+        ]);
+        if (!empty($mediaEntities)) {
+          $mediaStorage->delete($mediaEntities);
+        }
+      }
+      catch (\Exception $e) {
+        $logger->warning(
+          'HearMe uninstall: could not delete media for file @fid: @msg',
+          ['@fid' => $fid, '@msg' => $e->getMessage()]
+        );
       }
     }
 
-    $fileEntities = $fileStorage->loadMultiple($ttsFileIds);
-    $fileStorage->delete($fileEntities);
+    foreach ($fileStorage->loadMultiple($ttsFileIds) as $fileEntity) {
+      try {
+        $fileEntity->delete();
+      }
+      catch (\Exception $e) {
+        $logger->warning(
+          'HearMe uninstall: could not delete file entity @fid: @msg',
+          ['@fid' => $fileEntity->id(), '@msg' => $e->getMessage()]
+        );
+      }
+    }
 
     $logger->info(
       'HearMe uninstall: deleted @count TTS media/file record(s).',
@@ -95,21 +112,33 @@ function hear_me_uninstall() {
   // Step 2 – Delete config entities created from config/install/.
   //
   // Dependency order (most-dependent first):
-  //   field.field   → depends on field.storage and media.type
-  //   field.storage → depends on media.type
-  //   media.type    → no hear_me dependencies
+  //   field_config  → depends on field_storage_config and media.type
+  //   field_storage_config → depends on media.type
+  //   media_type    → no hear_me dependencies
   // -------------------------------------------------------------------------
-  $installConfigs = [
-    'field.field.media.audio.field_media_audio_file',
-    'field.storage.media.field_media_audio_file',
-    'media.type.audio',
+  $configEntityDeletions = [
+    ['storage' => 'field_config',         'id' => 'media.audio.field_media_audio_file'],
+    ['storage' => 'field_storage_config', 'id' => 'media.field_media_audio_file'],
+    ['storage' => 'media_type',           'id' => 'audio'],
   ];
 
-  foreach ($installConfigs as $configName) {
-    $config = $configFactory->getEditable($configName);
-    if (!$config->isNew()) {
-      $config->delete();
-      $logger->info('HearMe uninstall: deleted config @name.', ['@name' => $configName]);
+  foreach ($configEntityDeletions as ['storage' => $storageType, 'id' => $entityId]) {
+    try {
+      $storage = $entityTypeManager->getStorage($storageType);
+      $entity  = $storage->load($entityId);
+      if ($entity) {
+        $entity->delete();
+        $logger->info(
+          'HearMe uninstall: deleted @type entity "@id".',
+          ['@type' => $storageType, '@id' => $entityId]
+        );
+      }
+    }
+    catch (\Exception $e) {
+      $logger->error(
+        'HearMe uninstall: failed to delete @type entity "@id": @msg',
+        ['@type' => $storageType, '@id' => $entityId, '@msg' => $e->getMessage()]
+      );
     }
   }
 
@@ -153,7 +182,8 @@ function hear_me_entity_insert(\Drupal\Core\Entity\EntityInterface $entity) {
     return;
   }
 
-  $text = $entity->getTitle() . ' ' . $entity->body->value;
+  $bodyText = $entity->hasField('body') ? ($entity->body->value ?? '') : '';
+  $text = trim($entity->getTitle() . ' ' . $bodyText);
   $lang = \Drupal::service('hear_me.service')->getDefaultLang();
 
   \Drupal::queue('hear_me_tts')->createItem([

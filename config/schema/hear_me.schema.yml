@@ -11,6 +11,12 @@ hear_me.settings:
     tts_audio_field:
       type: string
       label: 'Machine name of the node field used to attach TTS audio media'
+    queue_bundles:
+      type: sequence
+      label: 'Node bundles that trigger queue-based TTS pre-generation on insert'
+      sequence:
+        type: string
+        label: 'Bundle machine name'
 
 hear_me.provider.piper:
   type: config_object

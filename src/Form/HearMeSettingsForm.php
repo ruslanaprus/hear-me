@@ -4,6 +4,7 @@ namespace Drupal\hear_me\Form;
 
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Config\TypedConfigManagerInterface;
+use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Form\ConfigFormBase;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\hear_me\Service\HearMeService;
@@ -13,13 +14,22 @@ class HearMeSettingsForm extends ConfigFormBase {
 
   protected HearMeService $ttsService;
 
+  /**
+   * The entity type manager, used to list available node bundles.
+   *
+   * @var \Drupal\Core\Entity\EntityTypeManagerInterface
+   */
+  protected EntityTypeManagerInterface $entityTypeManager;
+
   public function __construct(
     ConfigFactoryInterface $configFactory,
     TypedConfigManagerInterface $typedConfigManager,
     HearMeService $ttsService,
+    EntityTypeManagerInterface $entityTypeManager,
   ) {
     parent::__construct($configFactory, $typedConfigManager);
-    $this->ttsService = $ttsService;
+    $this->ttsService        = $ttsService;
+    $this->entityTypeManager = $entityTypeManager;
   }
 
   public static function create(ContainerInterface $container): static {
@@ -27,6 +37,7 @@ class HearMeSettingsForm extends ConfigFormBase {
       $container->get('config.factory'),
       $container->get('config.typed'),
       $container->get('hear_me.service'),
+      $container->get('entity_type.manager'),
     );
   }
 
@@ -82,6 +93,23 @@ class HearMeSettingsForm extends ConfigFormBase {
       '#required'      => TRUE,
     ];
 
+    $bundleOptions = [];
+    foreach ($this->entityTypeManager->getStorage('node_type')->loadMultiple() as $type) {
+      $bundleOptions[$type->id()] = $type->label();
+    }
+
+    $form['queue_bundles'] = [
+      '#type'          => 'checkboxes',
+      '#title'         => $this->t('Queue TTS pre-generation for content types'),
+      '#description'   => $this->t(
+        'When a new node of the selected type is created, its title and body '
+        . 'are queued for background TTS synthesis. Leave all unchecked to '
+        . 'disable automatic pre-generation entirely.'
+      ),
+      '#options'       => $bundleOptions,
+      '#default_value' => $config->get('queue_bundles') ?? [],
+    ];
+
     $form['provider_settings'] = [
       '#type'       => 'fieldset',
       '#title'      => $this->t('Provider Settings'),
@@ -105,10 +133,15 @@ class HearMeSettingsForm extends ConfigFormBase {
     $providerKey = $form_state->getValue('provider');
     $providers   = $this->ttsService->getProviders();
 
+    $queueBundles = array_values(
+      array_filter($form_state->getValue('queue_bundles') ?? [])
+    );
+
     $this->configFactory->getEditable('hear_me.settings')
       ->set('provider',        $providerKey)
       ->set('cache_enabled',   (bool) $form_state->getValue('cache_enabled'))
       ->set('tts_audio_field', $form_state->getValue('tts_audio_field'))
+      ->set('queue_bundles',   $queueBundles)
       ->save();
 
     if (isset($providers[$providerKey])) {

@@ -134,18 +134,33 @@ function hear_me_uninstall() {
   }
 }
 
+/**
+ * Implements hook_entity_insert().
+ *
+ * When a new node is created, queues it for background TTS pre-generation
+ * if its bundle is listed in the hear_me.settings queue_bundles setting.
+ *
+ * The list of bundles is configured at Administration > Configuration >
+ * Media > HearMe TTS Settings. No bundles are enabled by default (opt-in)
+ */
 function hear_me_entity_insert(\Drupal\Core\Entity\EntityInterface $entity) {
-  if ($entity->getEntityTypeId() === 'node' && $entity->bundle() === 'article') {
-    $text = $entity->getTitle() . ' ' . $entity->body->value;
-    $lang = \Drupal::service('hear_me.service')->getDefaultLang();
-
-    $queue = \Drupal::queue('hear_me_tts');
-    $queue->createItem([
-      'nid' => $entity->id(),
-      'text' => $text,
-      'lang' => $lang,
-    ]);
+  if ($entity->getEntityTypeId() !== 'node') {
+    return;
   }
+
+  $queueBundles = \Drupal::config('hear_me.settings')->get('queue_bundles') ?? [];
+  if (empty($queueBundles) || !in_array($entity->bundle(), $queueBundles, TRUE)) {
+    return;
+  }
+
+  $text = $entity->getTitle() . ' ' . $entity->body->value;
+  $lang = \Drupal::service('hear_me.service')->getDefaultLang();
+
+  \Drupal::queue('hear_me_tts')->createItem([
+    'nid'  => $entity->id(),
+    'text' => $text,
+    'lang' => $lang,
+  ]);
 }
 
 function hear_me_page_attachments(array &$attachments) {

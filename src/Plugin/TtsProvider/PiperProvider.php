@@ -3,16 +3,14 @@
 namespace Drupal\hear_me\Plugin\TtsProvider;
 
 use Drupal\Core\Config\ConfigFactoryInterface;
-use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\File\FileExists;
 use Drupal\Core\File\FileSystemInterface;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Language\LanguageManagerInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\Core\StringTranslation\StringTranslationTrait;
-use Drupal\file\Entity\File;
 use Drupal\hear_me\Service\TtsFileHelper;
-use Drupal\media\Entity\Media;
+use Drupal\hear_me\TtsSynthesisResult;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 
@@ -27,7 +25,6 @@ class PiperProvider implements TtsProviderInterface {
   protected ConfigFactoryInterface $configFactory;
   protected FileSystemInterface $fileSystem;
   protected TtsFileHelper $fileHelper;
-  protected EntityTypeManagerInterface $entityTypeManager;
   protected LanguageManagerInterface $languageManager;
   protected $logger;
 
@@ -42,8 +39,6 @@ class PiperProvider implements TtsProviderInterface {
    *   The file system service.
    * @param \Drupal\hear_me\Service\TtsFileHelper $file_helper
    *   The TTS file URI helper.
-   * @param \Drupal\Core\Entity\EntityTypeManagerInterface $entity_type_manager
-   *   The entity type manager.
    * @param \Drupal\Core\Language\LanguageManagerInterface $language_manager
    *   The language manager.
    * @param \Drupal\Core\Logger\LoggerChannelFactoryInterface $logger_factory
@@ -54,7 +49,6 @@ class PiperProvider implements TtsProviderInterface {
     ConfigFactoryInterface $config_factory,
     FileSystemInterface $file_system,
     TtsFileHelper $file_helper,
-    EntityTypeManagerInterface $entity_type_manager,
     LanguageManagerInterface $language_manager,
     LoggerChannelFactoryInterface $logger_factory,
   ) {
@@ -62,7 +56,6 @@ class PiperProvider implements TtsProviderInterface {
     $this->configFactory     = $config_factory;
     $this->fileSystem        = $file_system;
     $this->fileHelper        = $file_helper;
-    $this->entityTypeManager = $entity_type_manager;
     $this->languageManager   = $language_manager;
     $this->logger            = $logger_factory->get('hear_me');
   }
@@ -128,14 +121,13 @@ class PiperProvider implements TtsProviderInterface {
   }
 
   /**
-   * Calls the Piper TTS microservice, saves the returned audio to the managed
-   * file system, and wraps it in a Media entity.
+   * Calls the Piper TTS microservice, saves the returned audio to the file
+   * system, and returns a DTO with the URI and raw bytes.
    *
-   * Returns NULL on any failure; all failures are logged to the hear_me
-   * channel so problems are visible in the Drupal watchdog without crashing
-   * the calling code.
+   * Returns NULL on any failure; all failures are logged so they surface in
+   * watchdog without crashing the caller.
    */
-  public function synthesize(string $text, string $lang): ?Media {
+  public function synthesize(string $text, string $lang): ?TtsSynthesisResult {
     $config   = $this->configFactory->get('hear_me.provider.piper');
     $endpoint = $config->get('endpoint');
 
@@ -181,30 +173,7 @@ class PiperProvider implements TtsProviderInterface {
       return NULL;
     }
 
-    $fileStorage   = $this->entityTypeManager->getStorage('file');
-    $existingFiles = $fileStorage->loadByProperties(['uri' => $savedUri]);
-
-    if ($existingFiles) {
-      $fileEntity = reset($existingFiles);
-    }
-    else {
-      $fileEntity = File::create([
-        'uri'    => $savedUri,
-        'status' => 1,
-      ]);
-      $fileEntity->save();
-    }
-
-    $media = Media::create([
-      'bundle'                 => 'audio',
-      'name'                   => 'TTS-' . $lang . '-' . md5($text),
-      'field_media_audio_file' => [
-        'target_id' => $fileEntity->id(),
-      ],
-    ]);
-    $media->save();
-
-    return $media;
+    return new TtsSynthesisResult($savedUri, $audioContent);
   }
 
 }

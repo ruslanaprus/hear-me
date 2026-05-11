@@ -6,6 +6,8 @@ use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\File\FileSystemInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
+use Drupal\file\Entity\File;
+use Drupal\hear_me\TtsSynthesisResult;
 use Drupal\media\Entity\Media;
 
 class HearMeService {
@@ -134,7 +136,9 @@ class HearMeService {
   /**
    * Synthesizes text to speech using the configured provider.
    *
-   * Checks the file-based cache before delegating to the provider.
+   * Checks the file-based cache before delegating to the provider. When the
+   * provider returns a TtsSynthesisResult DTO, this method creates (or reuses)
+   * the managed File entity and wraps it in a Media entity.
    *
    * Returns NULL (rather than throwing) on synthesis failure so that callers
    * such as the controller and the queue worker can handle the absence of
@@ -190,7 +194,56 @@ class HearMeService {
       }
     }
 
-    return $provider->synthesize($text, $lang);
+    $result = $provider->synthesize($text, $lang);
+    if (!$result instanceof TtsSynthesisResult) {
+      return NULL;
+    }
+
+    return $this->createMediaFromResult($result, $lang, $text);
+  }
+
+  /**
+   * Creates or reuses a managed File entity and wraps it in a Media entity.
+   *
+   * Separated from synthesize() for readability. Reuses an existing File
+   * entity if the URI is already tracked (cache-replace scenario) to avoid
+   * duplicate managed file records.
+   *
+   * @param \Drupal\hear_me\TtsSynthesisResult $result
+   *   DTO returned by the provider.
+   * @param string $lang
+   *   Language code used in the Media entity name.
+   * @param string $text
+   *   Original text used in the Media entity name (MD5-hashed).
+   *
+   * @return \Drupal\media\Entity\Media|null
+   *   The saved Media entity, or NULL if entity creation fails.
+   */
+  private function createMediaFromResult(TtsSynthesisResult $result, string $lang, string $text): ?Media {
+    $fileStorage   = $this->entityTypeManager->getStorage('file');
+    $existingFiles = $fileStorage->loadByProperties(['uri' => $result->uri]);
+
+    if ($existingFiles) {
+      $fileEntity = reset($existingFiles);
+    }
+    else {
+      $fileEntity = File::create([
+        'uri'    => $result->uri,
+        'status' => 1,
+      ]);
+      $fileEntity->save();
+    }
+
+    $media = Media::create([
+      'bundle'                 => 'audio',
+      'name'                   => 'TTS-' . $lang . '-' . md5($text),
+      'field_media_audio_file' => [
+        'target_id' => $fileEntity->id(),
+      ],
+    ]);
+    $media->save();
+
+    return $media;
   }
 
   /**

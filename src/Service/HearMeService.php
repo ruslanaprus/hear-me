@@ -157,6 +157,30 @@ class HearMeService {
    *   Media entity containing the audio file, or NULL on failure.
    */
   public function synthesize(string $text, string $lang): ?Media {
+    [$media] = $this->synthesizeWithBytes($text, $lang);
+    return $media;
+  }
+
+  /**
+   * Synthesizes and returns both the Media entity and raw audio bytes.
+   *
+   * This is the single internal code path for all synthesis. On a cache hit
+   * the bytes are read from disk (the file already exists). On a cache miss
+   * the bytes come directly from TtsSynthesisResult::$bytes, avoiding a
+   * second disk read.
+   *
+   * @param string $text
+   *   The text to synthesize.
+   * @param string $lang
+   *   Language code (e.g., 'en', 'uk').
+   *
+   * @throws \RuntimeException
+   *   If the active provider key cannot be resolved from config.
+   *
+   * @return array{0: \Drupal\media\Entity\Media|null, 1: string|null}
+   *   A two-element array: [Media|null, bytes|null].
+   */
+  private function synthesizeWithBytes(string $text, string $lang): array {
     $config      = $this->configFactory->get('hear_me.settings');
     $providerKey = $this->resolveProviderKey();
 
@@ -168,15 +192,16 @@ class HearMeService {
         'Update the provider at /admin/config/media/hear-me.',
         ['@key' => $providerKey]
       );
-      return NULL;
+      return [NULL, NULL];
     }
 
     $provider = $providers[$providerKey];
 
     if ($config->get('cache_enabled')) {
-      $uri = $this->buildTtsUri($text, $lang, $providerKey);
+      $uri      = $this->buildTtsUri($text, $lang, $providerKey);
+      $realpath = $this->fileSystem->realpath($uri);
 
-      if (file_exists($this->fileSystem->realpath($uri))) {
+      if ($realpath && file_exists($realpath)) {
         $files = $this->entityTypeManager
           ->getStorage('file')
           ->loadByProperties(['uri' => $uri]);
@@ -188,7 +213,8 @@ class HearMeService {
             ->loadByProperties(['field_media_audio_file' => $file->id()]);
 
           if ($media) {
-            return reset($media);
+            $bytes = file_get_contents($realpath) ?: NULL;
+            return [reset($media), $bytes];
           }
         }
       }
@@ -196,10 +222,11 @@ class HearMeService {
 
     $result = $provider->synthesize($text, $lang);
     if (!$result instanceof TtsSynthesisResult) {
-      return NULL;
+      return [NULL, NULL];
     }
 
-    return $this->createMediaFromResult($result, $lang, $text);
+    $media = $this->createMediaFromResult($result, $lang, $text);
+    return [$media, $result->bytes];
   }
 
   /**
@@ -249,9 +276,10 @@ class HearMeService {
   /**
    * Returns the raw audio bytes for the given text and language.
    *
-   * Synthesizes if necessary (cache miss) and reads the resulting WAV file
-   * from the filesystem. Keeping this logic in the service means the
-   * controller stays free of any filesystem or entity knowledge.
+   * Synthesizes if necessary (cache miss) and returns the WAV bytes. On a
+   * fresh synthesis the bytes come directly from TtsSynthesisResult::$bytes
+   * so no second disk read is performed. On a cache hit the file already
+   * exists on disk and is read once inside synthesizeWithBytes().
    *
    * @param string $text
    *   The text to synthesize.
@@ -259,34 +287,11 @@ class HearMeService {
    *   Language code (e.g., 'en', 'uk').
    *
    * @return string|null
-   *   Raw WAV file contents, or NULL if synthesis or file-read failed.
+   *   Raw WAV file contents, or NULL if synthesis failed.
    */
   public function getAudioBytes(string $text, string $lang): ?string {
-    $media = $this->synthesize($text, $lang);
-    if (!$media) {
-      return NULL;
-    }
-
-    $file    = $media->get('field_media_audio_file')->entity;
-    if (!$file) {
-      $this->logger->error(
-        'HearMe: media entity @mid has no referenced file entity on field_media_audio_file.',
-        ['@mid' => $media->id()]
-      );
-      return NULL;
-    }
-    $uri     = $file->getFileUri();
-    $realpath = $this->fileSystem->realpath($uri);
-
-    if (!$realpath || !is_readable($realpath)) {
-      $this->logger->error(
-        'HearMe: audio file at "@uri" is not readable after synthesis.',
-        ['@uri' => $uri]
-      );
-      return NULL;
-    }
-
-    return file_get_contents($realpath);
+    [, $bytes] = $this->synthesizeWithBytes($text, $lang);
+    return $bytes;
   }
 
   /**

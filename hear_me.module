@@ -193,7 +193,32 @@ function hear_me_entity_insert(\Drupal\Core\Entity\EntityInterface $entity) {
   ]);
 }
 
+/**
+ * Implements hook_page_attachments().
+ *
+ * Attaches the hear_me frontend library and passes the resolved language to
+ * drupalSettings so hear_me.js knows which language to send to the TTS
+ * endpoint.
+ *
+ * Skips admin routes: admin pages never render front-end node content
+ * so there is nothing to read aloud, and we avoid loading the JS bundle on
+ * every admin page.
+ *
+ * Also skips anonymous users and users without the 'use tts playback'
+ * permission so the JS bundle (and the endpoint it calls) is not exposed to
+ * visitors who cannot use the feature.
+ */
 function hear_me_page_attachments(array &$attachments) {
+  /** @var \Drupal\Core\Routing\AdminContext $adminContext */
+  $adminContext = \Drupal::service('router.admin_context');
+  if ($adminContext->isAdminRoute()) {
+    return;
+  }
+
+  if (!\Drupal::currentUser()->hasPermission('use tts playback')) {
+    return;
+  }
+
   $attachments['#attached']['library'][] = 'hear_me/frontend';
 
   $currentLangcode = \Drupal::languageManager()

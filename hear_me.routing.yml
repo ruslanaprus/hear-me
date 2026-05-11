@@ -4,7 +4,7 @@ hear_me.tts:
     _controller: '\Drupal\hear_me\Controller\HearMeController::synthesize'
     _title: 'HearMe TTS'
   requirements:
-    _permission: 'access content'
+    _permission: 'use tts playback'
   methods: [POST]
 
 hear_me.settings:

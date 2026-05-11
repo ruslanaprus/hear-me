@@ -5,6 +5,7 @@ hear_me.tts:
     _title: 'HearMe TTS'
   requirements:
     _permission: 'use tts playback'
+    _csrf_request_header_token: 'TRUE'
   methods: [POST]
 
 hear_me.settings:

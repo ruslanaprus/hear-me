@@ -4,6 +4,7 @@ namespace Drupal\hear_me\Service;
 
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\Core\File\FileExists;
 use Drupal\Core\File\FileSystemInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\file\Entity\File;
@@ -16,7 +17,7 @@ class HearMeService {
   protected iterable $providers;
   protected FileSystemInterface $fileSystem;
   protected EntityTypeManagerInterface $entityTypeManager;
-  protected TtsFileHelper $fileHelper;
+  protected TtsFileHelperInterface $fileHelper;
   protected \Psr\Log\LoggerInterface $logger;
 
   public function __construct(
@@ -24,7 +25,7 @@ class HearMeService {
     iterable $providers,
     FileSystemInterface $fileSystem,
     EntityTypeManagerInterface $entityTypeManager,
-    TtsFileHelper $fileHelper,
+    TtsFileHelperInterface $fileHelper,
     LoggerChannelFactoryInterface $loggerFactory,
   ) {
     $this->configFactory     = $configFactory;
@@ -61,8 +62,8 @@ class HearMeService {
   /**
    * Builds the canonical file URI for a TTS audio file.
    *
-   * Delegates to TtsFileHelper so callers can reach this via the central
-   * service without needing to inject TtsFileHelper separately.
+   * Delegates to the file helper so callers can reach this via the central
+   * service without needing to inject the helper separately.
    *
    * @param string $text
    * @param string $lang
@@ -225,7 +226,17 @@ class HearMeService {
       return [NULL, NULL];
     }
 
-    $media = $this->createMediaFromResult($result, $lang, $text);
+    $uri = $this->buildTtsUri($text, $lang, $providerKey);
+    $savedUri = $this->fileSystem->saveData($result->bytes, $uri, FileExists::Replace);
+    if (!$savedUri) {
+      $this->logger->error(
+        'HearMe: failed to save synthesized audio data to @uri.',
+        ['@uri' => $uri]
+      );
+      return [NULL, NULL];
+    }
+
+    $media = $this->createMediaFromUri($savedUri, $lang, $text);
     return [$media, $result->bytes];
   }
 
@@ -236,8 +247,8 @@ class HearMeService {
    * entity if the URI is already tracked (cache-replace scenario) to avoid
    * duplicate managed file records.
    *
-   * @param \Drupal\hear_me\TtsSynthesisResult $result
-   *   DTO returned by the provider.
+   * @param string $uri
+   *   URI of the saved audio file.
    * @param string $lang
    *   Language code used in the Media entity name.
    * @param string $text
@@ -246,16 +257,16 @@ class HearMeService {
    * @return \Drupal\media\Entity\Media|null
    *   The saved Media entity, or NULL if entity creation fails.
    */
-  private function createMediaFromResult(TtsSynthesisResult $result, string $lang, string $text): ?Media {
+  private function createMediaFromUri(string $uri, string $lang, string $text): ?Media {
     $fileStorage   = $this->entityTypeManager->getStorage('file');
-    $existingFiles = $fileStorage->loadByProperties(['uri' => $result->uri]);
+    $existingFiles = $fileStorage->loadByProperties(['uri' => $uri]);
 
     if ($existingFiles) {
       $fileEntity = reset($existingFiles);
     }
     else {
       $fileEntity = File::create([
-        'uri'    => $result->uri,
+        'uri'    => $uri,
         'status' => 1,
       ]);
       $fileEntity->save();

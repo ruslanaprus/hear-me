@@ -1,13 +1,13 @@
 <?php
 
 use Drupal\Core\File\FileSystemInterface;
-use Drupal\hear_me\Service\TtsFileHelper;
+use Drupal\hear_me\Service\TtsFileHelperInterface;
 
 /**
  * Implements hook_install().
  *
  * Creates the public://tts directory with correct permissions so the
- * TTS Provider can write synthesised WAV files into it immediately.
+ * HearMeService can write synthesised WAV files into it immediately.
  */
 function hear_me_install() {
   $dir = 'public://tts';
@@ -48,7 +48,7 @@ function hear_me_uninstall() {
   // base path ('public://tts/').  This means we never touch audio files that
   // were uploaded independently by editors or any other module.
   // -------------------------------------------------------------------------
-  $ttsUriPrefix = TtsFileHelper::TTS_URI_BASE;
+  $ttsUriPrefix = TtsFileHelperInterface::TTS_URI_BASE;
 
   $fileStorage = $entityTypeManager->getStorage('file');
   $ttsFileIds  = $fileStorage->getQuery()

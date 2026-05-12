@@ -7,6 +7,7 @@ use Drupal\Core\Config\TypedConfigManagerInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Form\ConfigFormBase;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\hear_me\Plugin\TtsProvider\TtsProviderConfigurableInterface;
 use Drupal\hear_me\Service\HearMeService;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
@@ -116,7 +117,7 @@ class HearMeSettingsForm extends ConfigFormBase {
       '#attributes' => ['id' => 'provider-settings-wrapper'],
     ];
 
-    if (isset($providers[$providerKey])) {
+    if (isset($providers[$providerKey]) && $providers[$providerKey] instanceof TtsProviderConfigurableInterface) {
       $providerConfig = $this->config('hear_me.provider.' . $providerKey)->getRawData();
       $form['provider_settings'] = $providers[$providerKey]
         ->buildConfigForm($form['provider_settings'], $providerConfig);
@@ -144,7 +145,7 @@ class HearMeSettingsForm extends ConfigFormBase {
       ->set('queue_bundles',   $queueBundles)
       ->save();
 
-    if (isset($providers[$providerKey])) {
+    if (isset($providers[$providerKey]) && $providers[$providerKey] instanceof TtsProviderConfigurableInterface) {
       $providers[$providerKey]->submitConfigForm($form, $form_state);
     }
 

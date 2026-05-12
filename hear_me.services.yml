@@ -20,8 +20,6 @@ services:
     arguments:
       - '@http_client'
       - '@config.factory'
-      - '@file_system'
-      - '@hear_me.file_helper'
       - '@language_manager'
       - '@logger.factory'
     tags:

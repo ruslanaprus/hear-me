@@ -3,13 +3,10 @@
 namespace Drupal\hear_me\Plugin\TtsProvider;
 
 use Drupal\Core\Config\ConfigFactoryInterface;
-use Drupal\Core\File\FileExists;
-use Drupal\Core\File\FileSystemInterface;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Language\LanguageManagerInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\Core\StringTranslation\StringTranslationTrait;
-use Drupal\hear_me\Service\TtsFileHelper;
 use Drupal\hear_me\TtsSynthesisResult;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
@@ -17,14 +14,12 @@ use GuzzleHttp\Exception\GuzzleException;
 /**
  * TTS provider that synthesises audio via a self-hosted Piper service.
  */
-class PiperProvider implements TtsProviderInterface {
+class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInterface {
 
   use StringTranslationTrait;
 
   protected ClientInterface $httpClient;
   protected ConfigFactoryInterface $configFactory;
-  protected FileSystemInterface $fileSystem;
-  protected TtsFileHelper $fileHelper;
   protected LanguageManagerInterface $languageManager;
   protected $logger;
 
@@ -35,10 +30,6 @@ class PiperProvider implements TtsProviderInterface {
    *   The HTTP client.
    * @param \Drupal\Core\Config\ConfigFactoryInterface $config_factory
    *   The config factory.
-   * @param \Drupal\Core\File\FileSystemInterface $file_system
-   *   The file system service.
-   * @param \Drupal\hear_me\Service\TtsFileHelper $file_helper
-   *   The TTS file URI helper.
    * @param \Drupal\Core\Language\LanguageManagerInterface $language_manager
    *   The language manager.
    * @param \Drupal\Core\Logger\LoggerChannelFactoryInterface $logger_factory
@@ -47,21 +38,13 @@ class PiperProvider implements TtsProviderInterface {
   public function __construct(
     ClientInterface $http_client,
     ConfigFactoryInterface $config_factory,
-    FileSystemInterface $file_system,
-    TtsFileHelper $file_helper,
     LanguageManagerInterface $language_manager,
     LoggerChannelFactoryInterface $logger_factory,
   ) {
     $this->httpClient        = $http_client;
     $this->configFactory     = $config_factory;
-    $this->fileSystem        = $file_system;
-    $this->fileHelper        = $file_helper;
     $this->languageManager   = $language_manager;
     $this->logger            = $logger_factory->get('hear_me');
-  }
-
-  public function getProviderKey(): string {
-    return 'piper';
   }
 
   public function getLabel(): string {
@@ -121,8 +104,7 @@ class PiperProvider implements TtsProviderInterface {
   }
 
   /**
-   * Calls the Piper TTS microservice, saves the returned audio to the file
-   * system, and returns a DTO with the URI and raw bytes.
+   * Calls the Piper TTS microservice and returns the raw audio bytes.
    *
    * Returns NULL on any failure; all failures are logged so they surface in
    * watchdog without crashing the caller.
@@ -161,19 +143,7 @@ class PiperProvider implements TtsProviderInterface {
       return NULL;
     }
 
-    $audioContent = $response->getBody()->getContents();
-    $uri          = $this->fileHelper->buildTtsUri($text, $lang, $this->getProviderKey());
-    $savedUri = $this->fileSystem->saveData($audioContent, $uri, FileExists::Replace);
-
-    if (!$savedUri) {
-      $this->logger->error(
-        'Piper TTS: failed to save audio data to @uri.',
-        ['@uri' => $uri]
-      );
-      return NULL;
-    }
-
-    return new TtsSynthesisResult($savedUri, $audioContent);
+    return new TtsSynthesisResult($response->getBody()->getContents());
   }
 
 }

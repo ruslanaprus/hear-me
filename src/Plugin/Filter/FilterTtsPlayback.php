@@ -8,6 +8,7 @@ use Drupal\filter\FilterProcessResult;
 use Drupal\filter\Plugin\FilterBase;
 use Drupal\filter\Plugin\FilterInterface;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
+use Drupal\Core\Url;
 use Drupal\hear_me\Service\HearMeService;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
@@ -47,7 +48,9 @@ class FilterTtsPlayback extends FilterBase implements ContainerFactoryPluginInte
       : $this->ttsService->getDefaultLang();
 
     $pattern = '/<tts>(.*?)<\/tts>/s';
-    $newText = preg_replace_callback($pattern, function ($matches) use ($effectiveLang) {
+    $hasTtsMarkup = FALSE;
+    $newText = preg_replace_callback($pattern, function ($matches) use ($effectiveLang, &$hasTtsMarkup) {
+      $hasTtsMarkup = TRUE;
       $raw  = $matches[1];
       $lang = htmlspecialchars($effectiveLang, ENT_QUOTES, 'UTF-8');
       $plainText = html_entity_decode(strip_tags($raw), ENT_QUOTES | ENT_HTML5, 'UTF-8');
@@ -59,7 +62,21 @@ class FilterTtsPlayback extends FilterBase implements ContainerFactoryPluginInte
               <audio class="tts-audio" controls hidden></audio>';
     }, $text);
 
-    return new FilterProcessResult($newText);
+    $result = new FilterProcessResult($newText);
+    if ($hasTtsMarkup) {
+      $result->setAttachments([
+        'library' => ['hear_me/frontend'],
+        'drupalSettings' => [
+          'hear_me' => [
+            'default_lang' => $effectiveLang,
+            'tts_url' => Url::fromRoute('hear_me.tts')->toString(),
+            'csrf_token_url' => Url::fromRoute('system.csrftoken')->toString(),
+          ],
+        ],
+      ]);
+    }
+
+    return $result;
   }
 
   public function tips($long = FALSE): string {

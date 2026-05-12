@@ -1,4 +1,4 @@
-(function ($, Drupal, once) {
+(function (Drupal, drupalSettings, once) {
 
   /**
    * Resolve the effective TTS language from drupalSettings, with a fallback.
@@ -24,16 +24,19 @@
 
   function getCsrfToken() {
     if (!csrfTokenPromise) {
-      csrfTokenPromise = fetch('/session/token')
+      const tokenUrl = drupalSettings.hear_me?.csrf_token_url || Drupal.url('session/token');
+      csrfTokenPromise = fetch(tokenUrl)
         .then(function (res) { return res.text(); });
     }
     return csrfTokenPromise;
   }
 
   function fetchAndPlay(text, lang, audioEl) {
+    const ttsUrl = drupalSettings.hear_me?.tts_url || Drupal.url('hear-me/tts');
+
     getCsrfToken()
       .then(function (token) {
-        return fetch('/hear-me/tts', {
+        return fetch(ttsUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -63,10 +66,10 @@
     attach: function (context, settings) {
 
       once('hearMeTts', '.tts-play', context).forEach(function (el) {
-        $(el).on('click', function () {
-          const text    = $(this).data('text');
-          const lang    = resolveLang(settings, $(this).data('lang'));
-          const audioEl = $(this).siblings('.tts-audio')[0];
+        el.addEventListener('click', function () {
+          const text = el.dataset.text;
+          const lang = resolveLang(settings, el.dataset.lang);
+          const audioEl = el.parentElement?.querySelector('.tts-audio');
 
           if (!audioEl) {
             console.error('HearMe: no .tts-audio sibling found for button', el);
@@ -84,7 +87,7 @@
         audioEl.hidden    = true;
         el.insertAdjacentElement('afterend', audioEl);
 
-        $(el).on('click', function () {
+        el.addEventListener('click', function () {
           const lang = resolveLang(settings, null);
 
           const sourceEl = document.querySelector('main') || document.body;
@@ -113,4 +116,4 @@
       });
     }
   };
-})(jQuery, Drupal, once);
+})(Drupal, drupalSettings, once);

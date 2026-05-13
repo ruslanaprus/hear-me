@@ -62,7 +62,7 @@ function hear_me_uninstall() {
     foreach ($ttsFileIds as $fid) {
       try {
         $mediaEntities = $mediaStorage->loadByProperties([
-          'field_media_audio_file' => $fid,
+          'field_hear_me_audio_file' => $fid,
         ]);
         if (!empty($mediaEntities)) {
           $mediaStorage->delete($mediaEntities);
@@ -96,13 +96,13 @@ function hear_me_uninstall() {
 
   $ttsRealDir = $fileSystem->realpath('public://tts');
   if ($ttsRealDir && is_dir($ttsRealDir)) {
-    $wavFiles = glob($ttsRealDir . DIRECTORY_SEPARATOR . '*.wav') ?: [];
-    foreach ($wavFiles as $wavFile) {
-      if (@unlink($wavFile)) {
-        $logger->info('HearMe uninstall: removed file @file.', ['@file' => $wavFile]);
+    $ttsFiles = glob($ttsRealDir . DIRECTORY_SEPARATOR . '*') ?: [];
+    foreach ($ttsFiles as $ttsFile) {
+      if (is_file($ttsFile) && @unlink($ttsFile)) {
+        $logger->info('HearMe uninstall: removed file @file.', ['@file' => $ttsFile]);
       }
       else {
-        $logger->warning('HearMe uninstall: could not remove file @file.', ['@file' => $wavFile]);
+        $logger->warning('HearMe uninstall: could not remove file @file.', ['@file' => $ttsFile]);
       }
     }
     @rmdir($ttsRealDir);

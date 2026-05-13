@@ -8,6 +8,7 @@ use Drupal\Core\File\FileExists;
 use Drupal\Core\File\FileSystemInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\file\Entity\File;
+use Drupal\hear_me\TtsAudioResult;
 use Drupal\hear_me\TtsSynthesisResult;
 use Drupal\media\Entity\Media;
 
@@ -68,11 +69,12 @@ class HearMeService {
    * @param string $text
    * @param string $lang
    * @param string $providerKey
+   * @param string $extension
    *
    * @return string
    */
-  public function buildTtsUri(string $text, string $lang, string $providerKey): string {
-    return $this->fileHelper->buildTtsUri($text, $lang, $providerKey);
+  public function buildTtsUri(string $text, string $lang, string $providerKey, string $extension): string {
+    return $this->fileHelper->buildTtsUri($text, $lang, $providerKey, $extension);
   }
 
   /**
@@ -178,8 +180,8 @@ class HearMeService {
    * @throws \RuntimeException
    *   If the active provider key cannot be resolved from config.
    *
-   * @return array{0: \Drupal\media\Entity\Media|null, 1: string|null}
-   *   A two-element array: [Media|null, bytes|null].
+   * @return array{0: \Drupal\media\Entity\Media|null, 1: \Drupal\hear_me\TtsAudioResult|null}
+   *   A two-element array: [Media|null, audio result|null].
    */
   private function synthesizeWithBytes(string $text, string $lang): array {
     $config      = $this->configFactory->get('hear_me.settings');
@@ -199,7 +201,9 @@ class HearMeService {
     $provider = $providers[$providerKey];
 
     if ($config->get('cache_enabled')) {
-      $uri      = $this->buildTtsUri($text, $lang, $providerKey);
+      $mimeType = $provider->getDefaultMimeType();
+      $extension = $provider->getDefaultExtension();
+      $uri      = $this->buildTtsUri($text, $lang, $providerKey, $extension);
       $realpath = $this->fileSystem->realpath($uri);
 
       if ($realpath && file_exists($realpath)) {
@@ -215,8 +219,14 @@ class HearMeService {
 
           if ($media) {
             $bytes = file_get_contents($realpath) ?: NULL;
-            return [reset($media), $bytes];
+            return [reset($media), $bytes === NULL ? NULL : new TtsAudioResult($bytes, $mimeType, $extension)];
           }
+
+          $bytes = file_get_contents($realpath) ?: NULL;
+          return [
+            $this->createMediaFromUri($uri, $lang, $text),
+            $bytes === NULL ? NULL : new TtsAudioResult($bytes, $mimeType, $extension),
+          ];
         }
       }
     }
@@ -226,7 +236,7 @@ class HearMeService {
       return [NULL, NULL];
     }
 
-    $uri = $this->buildTtsUri($text, $lang, $providerKey);
+    $uri = $this->buildTtsUri($text, $lang, $providerKey, $result->extension);
     $savedUri = $this->fileSystem->saveData($result->bytes, $uri, FileExists::Replace);
     if (!$savedUri) {
       $this->logger->error(
@@ -237,7 +247,7 @@ class HearMeService {
     }
 
     $media = $this->createMediaFromUri($savedUri, $lang, $text);
-    return [$media, $result->bytes];
+    return [$media, new TtsAudioResult($result->bytes, $result->mimeType, $result->extension)];
   }
 
   /**
@@ -255,7 +265,7 @@ class HearMeService {
    *   Original text used in the Media entity name (MD5-hashed).
    *
    * @return \Drupal\media\Entity\Media|null
-   *   The saved Media entity, or NULL if entity creation fails.
+   *   The existing or saved Media entity, or NULL if entity creation fails.
    */
   private function createMediaFromUri(string $uri, string $lang, string $text): ?Media {
     $fileStorage   = $this->entityTypeManager->getStorage('file');
@@ -272,6 +282,14 @@ class HearMeService {
       $fileEntity->save();
     }
 
+    $mediaStorage = $this->entityTypeManager->getStorage('media');
+    $existingMedia = $mediaStorage->loadByProperties([
+      'field_media_audio_file' => $fileEntity->id(),
+    ]);
+    if ($existingMedia) {
+      return reset($existingMedia);
+    }
+
     $media = Media::create([
       'bundle'                 => 'audio',
       'name'                   => 'TTS-' . $lang . '-' . md5($text),
@@ -285,9 +303,9 @@ class HearMeService {
   }
 
   /**
-   * Returns the raw audio bytes for the given text and language.
+   * Returns audio bytes and format metadata for the given text and language.
    *
-   * Synthesizes if necessary (cache miss) and returns the WAV bytes. On a
+   * Synthesizes if necessary (cache miss) and returns audio bytes. On a
    * fresh synthesis the bytes come directly from TtsSynthesisResult::$bytes
    * so no second disk read is performed. On a cache hit the file already
    * exists on disk and is read once inside synthesizeWithBytes().
@@ -297,12 +315,23 @@ class HearMeService {
    * @param string $lang
    *   Language code (e.g., 'en', 'uk').
    *
+   * @return \Drupal\hear_me\TtsAudioResult|null
+   *   Audio result, or NULL if synthesis failed.
+   */
+  public function getAudio(string $text, string $lang): ?TtsAudioResult {
+    [, $audio] = $this->synthesizeWithBytes($text, $lang);
+    return $audio;
+  }
+
+  /**
+   * Returns the raw audio bytes for the given text and language.
+   *
    * @return string|null
-   *   Raw WAV file contents, or NULL if synthesis failed.
+   *   Raw audio file contents, or NULL if synthesis failed.
    */
   public function getAudioBytes(string $text, string $lang): ?string {
-    [, $bytes] = $this->synthesizeWithBytes($text, $lang);
-    return $bytes;
+    $audio = $this->getAudio($text, $lang);
+    return $audio?->bytes;
   }
 
   /**

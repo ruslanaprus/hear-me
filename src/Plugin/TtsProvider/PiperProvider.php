@@ -51,6 +51,14 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
     return 'Piper (self-hosted)';
   }
 
+  public function getDefaultMimeType(): string {
+    return 'audio/wav';
+  }
+
+  public function getDefaultExtension(): string {
+    return 'wav';
+  }
+
   public function getSupportedLanguages(): array {
     $langs = $this->configFactory->get('hear_me.provider.piper')->get('supported_langs');
     return is_array($langs) && !empty($langs) ? $langs : ['en'];
@@ -143,7 +151,11 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
       return NULL;
     }
 
-    return new TtsSynthesisResult($response->getBody()->getContents());
+    return new TtsSynthesisResult(
+      $response->getBody()->getContents(),
+      $this->getDefaultMimeType(),
+      $this->getDefaultExtension(),
+    );
   }
 
 }

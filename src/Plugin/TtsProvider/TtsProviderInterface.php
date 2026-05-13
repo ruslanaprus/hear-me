@@ -15,7 +15,7 @@ interface TtsProviderInterface {
    *   Language code (e.g. 'en', 'uk').
    *
    * @return \Drupal\hear_me\TtsSynthesisResult|null
-   *   A DTO carrying the raw bytes, or NULL on failure.
+   *   A DTO carrying the raw bytes and audio format, or NULL on failure.
    */
   public function synthesize(string $text, string $lang): ?TtsSynthesisResult;
 
@@ -36,5 +36,24 @@ interface TtsProviderInterface {
    *   Provider label, e.g. 'Piper (self-hosted)'.
    */
   public function getLabel(): string;
+
+  /**
+   * Returns the provider's default audio MIME type.
+   *
+   * Used for cache lookup before synthesis occurs. Individual synthesis results
+   * may still return a different MIME type if a provider supports that.
+   *
+   * @return string
+   *   MIME type, e.g. 'audio/wav'.
+   */
+  public function getDefaultMimeType(): string;
+
+  /**
+   * Returns the provider's default audio file extension.
+   *
+   * @return string
+   *   File extension without leading dot, e.g. 'wav'.
+   */
+  public function getDefaultExtension(): string;
 
 }

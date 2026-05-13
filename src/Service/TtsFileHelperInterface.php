@@ -21,10 +21,12 @@ interface TtsFileHelperInterface {
    *   The language code used for synthesis (e.g. 'en', 'uk').
    * @param string $providerKey
    *   The provider key (e.g. 'piper').
+   * @param string $extension
+   *   File extension without leading dot (e.g. 'wav').
    *
    * @return string
    *   A stream-wrapper URI such as 'public://tts/<hash>.wav'.
    */
-  public function buildTtsUri(string $text, string $lang, string $providerKey): string;
+  public function buildTtsUri(string $text, string $lang, string $providerKey, string $extension): string;
 
 }

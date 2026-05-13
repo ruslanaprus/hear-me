@@ -31,14 +31,14 @@ class HearMeController extends ControllerBase {
       return new Response('Missing text', 400);
     }
 
-    $bytes = $this->ttsService->getAudioBytes($text, $lang);
-    if ($bytes === NULL) {
+    $audio = $this->ttsService->getAudio($text, $lang);
+    if ($audio === NULL) {
       return new Response('Synthesis failed', 500);
     }
 
-    $response = new Response($bytes);
-    $response->headers->set('Content-Type', 'audio/wav');
-    $response->headers->set('Content-Disposition', 'inline; filename="tts.wav"');
+    $response = new Response($audio->bytes);
+    $response->headers->set('Content-Type', $audio->mimeType);
+    $response->headers->set('Content-Disposition', 'inline; filename="tts.' . $audio->extension . '"');
 
     return $response;
   }

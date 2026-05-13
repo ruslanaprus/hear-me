@@ -97,20 +97,17 @@ class HearMeInputValidator {
   }
 
   private function resolveSupportedLanguage(string $lang): ?string {
+    $supportedLangs = [];
     foreach ($this->ttsService->getSupportedLanguages() as $supportedLang) {
-      if ($this->normalizeLang($supportedLang) === $lang) {
-        return $supportedLang;
-      }
+      $supportedLangs[$this->normalizeLang($supportedLang)] = $supportedLang;
+    }
+
+    if (isset($supportedLangs[$lang])) {
+      return $supportedLangs[$lang];
     }
 
     $shortCode = substr($lang, 0, 2);
-    foreach ($this->ttsService->getSupportedLanguages() as $supportedLang) {
-      if ($this->normalizeLang($supportedLang) === $shortCode) {
-        return $supportedLang;
-      }
-    }
-
-    return NULL;
+    return $supportedLangs[$shortCode] ?? NULL;
   }
 
 }

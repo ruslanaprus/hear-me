@@ -215,7 +215,7 @@ class HearMeService {
           $file  = reset($files);
           $media = $this->entityTypeManager
             ->getStorage('media')
-            ->loadByProperties(['field_media_audio_file' => $file->id()]);
+            ->loadByProperties(['field_hear_me_audio_file' => $file->id()]);
 
           if ($media) {
             $bytes = file_get_contents($realpath) ?: NULL;
@@ -284,16 +284,16 @@ class HearMeService {
 
     $mediaStorage = $this->entityTypeManager->getStorage('media');
     $existingMedia = $mediaStorage->loadByProperties([
-      'field_media_audio_file' => $fileEntity->id(),
+      'field_hear_me_audio_file' => $fileEntity->id(),
     ]);
     if ($existingMedia) {
       return reset($existingMedia);
     }
 
     $media = Media::create([
-      'bundle'                 => 'audio',
+      'bundle'                 => 'hear_me_audio',
       'name'                   => 'TTS-' . $lang . '-' . md5($text),
-      'field_media_audio_file' => [
+      'field_hear_me_audio_file' => [
         'target_id' => $fileEntity->id(),
       ],
     ]);

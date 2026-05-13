@@ -2,14 +2,14 @@ langcode: en
 status: true
 dependencies:
   config:
-    - field.storage.media.field_media_audio_file
-    - media.type.audio
+    - field.storage.media.field_hear_me_audio_file
+    - media.type.hear_me_audio
   module:
     - file
-id: media.audio.field_media_audio_file
-field_name: field_media_audio_file
+id: media.hear_me_audio.field_hear_me_audio_file
+field_name: field_hear_me_audio_file
 entity_type: media
-bundle: audio
+bundle: hear_me_audio
 label: 'Audio File'
 description: ''
 required: true

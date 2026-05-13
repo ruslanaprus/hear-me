@@ -9,6 +9,38 @@
       || 'en';
   }
 
+  function getStatusElement(anchorEl) {
+    let statusEl = anchorEl.nextElementSibling;
+    while (statusEl && !statusEl.classList.contains('hear-me-status')) {
+      statusEl = statusEl.nextElementSibling;
+    }
+
+    if (!statusEl) {
+      statusEl = document.createElement('span');
+      statusEl.className = 'hear-me-status';
+      statusEl.setAttribute('role', 'status');
+      statusEl.setAttribute('aria-live', 'polite');
+      statusEl.hidden = true;
+      anchorEl.insertAdjacentElement('afterend', statusEl);
+    }
+
+    return statusEl;
+  }
+
+  function showStatus(anchorEl, message, type) {
+    const statusEl = getStatusElement(anchorEl);
+    const statusType = type || 'status';
+    statusEl.className = 'hear-me-status hear-me-status--' + statusType;
+    statusEl.textContent = message;
+    statusEl.hidden = false;
+  }
+
+  function clearStatus(anchorEl) {
+    const statusEl = getStatusElement(anchorEl);
+    statusEl.textContent = '';
+    statusEl.hidden = true;
+  }
+
   /**
    * POST text to the TTS endpoint and play the returned audio blob.
    *
@@ -34,6 +66,8 @@
   function fetchAndPlay(text, lang, audioEl) {
     const ttsUrl = drupalSettings.hear_me?.tts_url || Drupal.url('hear-me/tts');
 
+    showStatus(audioEl, Drupal.t('Generating audio...'));
+
     getCsrfToken()
       .then(function (token) {
         return fetch(ttsUrl, {
@@ -55,10 +89,13 @@
         const url = URL.createObjectURL(blob);
         audioEl.src = url;
         audioEl.hidden = false;
-        audioEl.play();
+        return audioEl.play();
       })
-      .catch(function (err) {
-        console.error('HearMe TTS error:', err);
+      .then(function () {
+        clearStatus(audioEl);
+      })
+      .catch(function () {
+        showStatus(audioEl, Drupal.t('Audio playback could not be started. Please try again.'), 'error');
       });
   }
 
@@ -72,7 +109,7 @@
           const audioEl = el.parentElement?.querySelector('.tts-audio');
 
           if (!audioEl) {
-            console.error('HearMe: no .tts-audio sibling found for button', el);
+            showStatus(el, Drupal.t('Audio player is not available for this text.'), 'error');
             return;
           }
 
@@ -107,7 +144,7 @@
             .join('\n');
 
           if (!text) {
-            console.warn('HearMe: no page text found to synthesise.');
+            showStatus(audioEl, Drupal.t('No readable page text was found.'), 'warning');
             return;
           }
 

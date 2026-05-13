@@ -59,7 +59,8 @@ class FilterTtsPlayback extends FilterBase implements ContainerFactoryPluginInte
 
       return '<span class="tts-text">' . $raw . '</span>
               <button class="tts-play" data-text="' . $escaped . '" data-lang="' . $lang . '" aria-label="Play text-to-speech" tabindex="0">🔊</button>
-              <audio class="tts-audio" controls hidden></audio>';
+              <audio class="tts-audio" controls hidden></audio>
+              <span class="hear-me-status" role="status" aria-live="polite" hidden></span>';
     }, $text);
 
     $result = new FilterProcessResult($newText);

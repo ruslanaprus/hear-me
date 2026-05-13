@@ -70,6 +70,17 @@ class HearMeBlock extends BlockBase implements ContainerFactoryPluginInterface {
           'data-action' => 'tts-page',
         ],
       ],
+      'status' => [
+        '#type' => 'html_tag',
+        '#tag' => 'div',
+        '#value' => '',
+        '#attributes' => [
+          'class' => ['hear-me-status'],
+          'role' => 'status',
+          'aria-live' => 'polite',
+          'hidden' => 'hidden',
+        ],
+      ],
       '#cache' => [
         'contexts' => ['languages:language_interface'],
         'tags'     => ['config:hear_me.settings'],

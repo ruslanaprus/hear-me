@@ -9,6 +9,7 @@ use Drupal\Core\Form\ConfigFormBase;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\hear_me\Plugin\TtsProvider\TtsProviderConfigurableInterface;
 use Drupal\hear_me\Service\HearMeService;
+use Drupal\hear_me\Service\HearMeInputValidator;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 class HearMeSettingsForm extends ConfigFormBase {
@@ -86,6 +87,28 @@ class HearMeSettingsForm extends ConfigFormBase {
       '#default_value' => $config->get('cache_enabled') ?? TRUE,
     ];
 
+    $form['max_request_bytes'] = [
+      '#type' => 'number',
+      '#title' => $this->t('Maximum TTS request body size'),
+      '#description' => $this->t('Maximum JSON request body size accepted by the TTS endpoint, in bytes.'),
+      '#default_value' => $config->get('max_request_bytes') ?? HearMeInputValidator::DEFAULT_MAX_REQUEST_BYTES,
+      '#min' => HearMeInputValidator::MIN_REQUEST_BYTES,
+      '#max' => HearMeInputValidator::ABSOLUTE_MAX_REQUEST_BYTES,
+      '#step' => 1,
+      '#required' => TRUE,
+    ];
+
+    $form['max_text_length'] = [
+      '#type' => 'number',
+      '#title' => $this->t('Maximum TTS text length'),
+      '#description' => $this->t('Maximum normalized text length accepted by the TTS endpoint, in characters.'),
+      '#default_value' => $config->get('max_text_length') ?? HearMeInputValidator::DEFAULT_MAX_TEXT_LENGTH,
+      '#min' => HearMeInputValidator::MIN_TEXT_LENGTH,
+      '#max' => HearMeInputValidator::ABSOLUTE_MAX_TEXT_LENGTH,
+      '#step' => 1,
+      '#required' => TRUE,
+    ];
+
     $form['tts_audio_field'] = [
       '#type'          => 'textfield',
       '#title'         => $this->t('TTS Audio Field'),
@@ -126,6 +149,26 @@ class HearMeSettingsForm extends ConfigFormBase {
     return parent::buildForm($form, $form_state);
   }
 
+  public function validateForm(array &$form, FormStateInterface $form_state): void {
+    parent::validateForm($form, $form_state);
+
+    $maxRequestBytes = (int) $form_state->getValue('max_request_bytes');
+    if ($maxRequestBytes < HearMeInputValidator::MIN_REQUEST_BYTES || $maxRequestBytes > HearMeInputValidator::ABSOLUTE_MAX_REQUEST_BYTES) {
+      $form_state->setErrorByName('max_request_bytes', $this->t('Maximum request body size must be between @min and @max bytes.', [
+        '@min' => HearMeInputValidator::MIN_REQUEST_BYTES,
+        '@max' => HearMeInputValidator::ABSOLUTE_MAX_REQUEST_BYTES,
+      ]));
+    }
+
+    $maxTextLength = (int) $form_state->getValue('max_text_length');
+    if ($maxTextLength < HearMeInputValidator::MIN_TEXT_LENGTH || $maxTextLength > HearMeInputValidator::ABSOLUTE_MAX_TEXT_LENGTH) {
+      $form_state->setErrorByName('max_text_length', $this->t('Maximum text length must be between @min and @max characters.', [
+        '@min' => HearMeInputValidator::MIN_TEXT_LENGTH,
+        '@max' => HearMeInputValidator::ABSOLUTE_MAX_TEXT_LENGTH,
+      ]));
+    }
+  }
+
   public function ajaxProviderSettings(array &$form, FormStateInterface $form_state): array {
     return $form['provider_settings'];
   }
@@ -141,6 +184,8 @@ class HearMeSettingsForm extends ConfigFormBase {
     $this->configFactory->getEditable('hear_me.settings')
       ->set('provider',        $providerKey)
       ->set('cache_enabled',   (bool) $form_state->getValue('cache_enabled'))
+      ->set('max_request_bytes', (int) $form_state->getValue('max_request_bytes'))
+      ->set('max_text_length', (int) $form_state->getValue('max_text_length'))
       ->set('tts_audio_field', $form_state->getValue('tts_audio_field'))
       ->set('queue_bundles',   $queueBundles)
       ->save();

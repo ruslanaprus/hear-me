@@ -3,6 +3,13 @@ services:
   hear_me.file_helper:
     class: Drupal\hear_me\Service\TtsFileHelper
 
+  # TTS endpoint request validator
+  hear_me.input_validator:
+    class: Drupal\hear_me\Service\HearMeInputValidator
+    arguments:
+      - '@config.factory'
+      - '@hear_me.service'
+
   # Central orchestrator service
   hear_me.service:
     class: Drupal\hear_me\Service\HearMeService

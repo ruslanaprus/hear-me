@@ -2,4 +2,5 @@ provider: 'piper'
 cache_enabled: true
 tts_audio_field: 'field_tts_audio'
 queue_bundles: []
-
+max_request_bytes: 32768
+max_text_length: 5000

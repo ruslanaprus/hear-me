@@ -17,6 +17,12 @@ hear_me.settings:
       sequence:
         type: string
         label: 'Bundle machine name'
+    max_request_bytes:
+      type: integer
+      label: 'Maximum TTS request body size in bytes'
+    max_text_length:
+      type: integer
+      label: 'Maximum TTS text length in characters'
 
 hear_me.provider.piper:
   type: config_object

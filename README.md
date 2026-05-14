@@ -155,10 +155,16 @@ Place the **HearMe TTS Block** via **Administration → Structure → Block layo
 
 The block renders a 🔊 **Listen to this page** button that can be placed in any region. When clicked, it:
 
-1. Takes the text content of the `<main>` element (or `<body>` if `<main>` is absent).
-2. Strips navigation, contextual links, and module-specific elements.
-3. POSTs the cleaned text to `/hear-me/tts`.
-4. Plays the returned audio through an `<audio controls>` element inserted after the button.
+1. Uses the currently highlighted text first, if the user has selected any text on the page.
+2. Otherwise reads the page in a content-first mode (article/main text), excluding comments, menu, and sidebar by default.
+3. Lets users opt in to **Include comments**, **Include sidebar**, and **Include menu** via checkboxes under the block.
+4. Sends the cleaned text to `/hear-me/tts` and plays the returned audio through an `<audio controls>` element.
+
+The block also renders a **Select section to listen** control:
+
+- Turns on an inspect mode where users can hover and click a specific section to read aloud.
+- Works with keyboard navigation too (`Arrow keys` to move, `Enter` to select, `Esc` to cancel).
+- Limits default selectable targets to content-first areas, with comments/sidebar/menu available only when their opt-in checkboxes are enabled.
 
 The block is language-aware: it resolves the current interface language against the provider's supported language codes before sending the request.
 
@@ -318,55 +324,3 @@ On uninstall the module removes:
 - All `hear_me.*` config objects.
 
 Audio files uploaded by editors or created by other modules are not touched.
-
----
-
-## File structure
-
-```
-hear_me/
-├── config/
-│   ├── install/
-│   │   ├── hear_me.settings.yml                           — default global settings
-│   │   ├── hear_me.provider.piper.yml                     — default Piper provider settings
-│   │   ├── media.type.hear_me_audio.yml                   — hear_me_audio media type
-│   │   ├── field.storage.media.field_hear_me_audio_file.yml
-│   │   └── field.field.media.hear_me_audio.field_hear_me_audio_file.yml
-│   └── schema/
-│       └── hear_me.schema.yml                             — typed config schemas
-├── js/
-│   └── hear_me.js                                         — speaker button + block click handler
-├── src/
-│   ├── Controller/
-│   │   └── HearMeController.php                           — POST /hear-me/tts handler
-│   ├── Form/
-│   │   └── HearMeSettingsForm.php                         — admin settings form (AJAX provider switching)
-│   ├── Service/
-│   │   ├── HearMeService.php                              — orchestrator: cache, synthesis, media entities
-│   │   ├── HearMeInputValidator.php                       — request body validation + text normalisation
-│   │   ├── TtsFileHelper.php                              — URI builder: md5(text+lang+provider+ext)
-│   │   └── TtsFileHelperInterface.php                     — interface + TTS_URI_BASE constant
-│   ├── Plugin/
-│   │   ├── TtsProvider/
-│   │   │   ├── TtsProviderInterface.php                   — contract every provider must implement
-│   │   │   ├── TtsProviderConfigurableInterface.php       — optional contract for providers with settings
-│   │   │   └── PiperProvider.php                          — built-in Piper HTTP provider
-│   │   ├── Block/
-│   │   │   └── HearMeBlock.php                            — "Listen to this page" block
-│   │   ├── Field/Formatter/
-│   │   │   └── TtsAudioFormatter.php                      — renders file fields as <audio> elements
-│   │   ├── Filter/
-│   │   │   └── FilterTtsPlayback.php                      — transforms <tts>…</tts> into speaker buttons
-│   │   └── Queue/
-│   │       └── HearMeQueueWorker.php                      — cron queue worker for background synthesis
-│   ├── TtsAudioResult.php                                 — DTO: audio bytes + MIME + extension (HTTP response)
-│   ├── TtsSynthesisResult.php                             — DTO: raw synthesis output from provider
-│   └── TtsInputValidationResult.php                       — DTO: input validation outcome
-├── hear_me.info.yml
-├── hear_me.libraries.yml
-├── hear_me.links.menu.yml
-├── hear_me.module                                         — install / uninstall / entity insert hooks
-├── hear_me.permissions.yml
-├── hear_me.routing.yml
-└── hear_me.services.yml                                   — service definitions + provider tag registration
-```

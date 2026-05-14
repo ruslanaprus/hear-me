@@ -1,4 +1,7 @@
 frontend:
+  css:
+    theme:
+      css/hear_me.css: {}
   js:
     js/hear_me.js: {}
   dependencies:

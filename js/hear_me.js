@@ -125,7 +125,7 @@
 
   function loadFloatingUiState(settings) {
     const state = {
-      collapsed: false,
+      collapsed: true,
       dock: 'right',
     };
 
@@ -136,8 +136,6 @@
       }
 
       const parsedState = JSON.parse(storedState);
-      state.collapsed = parsedState.collapsed === true;
-
       if (parsedState.dock === 'left' || parsedState.dock === 'right') {
         state.dock = parsedState.dock;
       }
@@ -152,7 +150,6 @@
   function saveFloatingUiState(settings, state) {
     try {
       window.localStorage.setItem(getFloatingUiStorageKey(settings), JSON.stringify({
-        collapsed: state.collapsed === true,
         dock: state.dock === 'left' ? 'left' : 'right',
       }));
     }
@@ -1052,7 +1049,6 @@
 
           floatingUi.state.collapsed = !floatingUi.state.collapsed;
           applyFloatingUiState(floatingUi, floatingUi.state);
-          saveFloatingUiState(settings, floatingUi.state);
         });
 
         floatingUi.dockButton.addEventListener('click', function () {

@@ -12,6 +12,10 @@
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.16);
 }
 
+.block-hear-me-block:not(.hear-me-floating-ready) {
+  visibility: hidden;
+}
+
 .block-hear-me-block.hear-me-dock-right {
   right: clamp(0.75rem, 2vw, 1.5rem);
 }

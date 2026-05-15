@@ -1,6 +1,5 @@
 .block-hear-me-block {
   position: fixed;
-  right: clamp(0.75rem, 2vw, 1.5rem);
   bottom: clamp(0.75rem, 2vw, 1.5rem);
   z-index: 550;
   max-width: min(92vw, 28rem);
@@ -13,12 +12,103 @@
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.16);
 }
 
+.block-hear-me-block.hear-me-dock-right {
+  right: clamp(0.75rem, 2vw, 1.5rem);
+}
+
+.block-hear-me-block.hear-me-dock-left {
+  left: clamp(0.75rem, 2vw, 1.5rem);
+}
+
+.block-hear-me-block.is-hear-me-collapsed {
+  width: auto;
+  max-width: none;
+  padding: 0;
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.block-hear-me-block.is-hear-me-collapsed .block__content {
+  width: 3.5rem;
+  height: 3.5rem;
+}
+
 .block-hear-me-block .block__title {
   display: none;
 }
 
 .block-hear-me-block .block__content {
   margin: 0;
+}
+
+.block-hear-me-block .contextual {
+  z-index: 1;
+}
+
+.block-hear-me-block .hear-me-floating-header,
+.block-hear-me-block .hear-me-panel-body {
+  position: relative;
+  z-index: 2;
+}
+
+.hear-me-floating-header {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-bottom: 0.65rem;
+}
+
+.is-hear-me-collapsed .hear-me-floating-header {
+  display: flex;
+  margin-bottom: 0;
+}
+
+.is-hear-me-collapsed .hear-me-dock-toggle {
+  display: none;
+}
+
+.hear-me-panel-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2rem;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--color--primary-50, #0b84c6);
+  border-radius: 9999px;
+  background: var(--color--white, #fff);
+  color: var(--color--primary-40, #0b5cab);
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.hear-me-panel-action:hover,
+.hear-me-panel-action:focus-visible {
+  background: var(--color--primary-80, #d5efff);
+}
+
+.hear-me-panel-action:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color--primary-50, #0b84c6) 35%, transparent);
+}
+
+.hear-me-collapse-toggle.is-fab {
+  width: 3.5rem;
+  min-height: 3.5rem;
+  padding: 0;
+  border-color: var(--color--primary-40, #0b5cab);
+  background: var(--color--primary-50, #0b84c6);
+  color: var(--color--white, #fff);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
+  font-size: 1.35rem;
+}
+
+.hear-me-collapse-toggle.is-fab:hover,
+.hear-me-collapse-toggle.is-fab:focus-visible {
+  background: var(--color--primary-40, #0b5cab);
 }
 
 .hear-me-control-button {
@@ -132,6 +222,22 @@
     max-width: none;
     bottom: 0.65rem;
     padding: 0.75rem;
+  }
+
+  .block-hear-me-block.is-hear-me-collapsed {
+    left: auto;
+    right: 0.75rem;
+    width: auto;
+    padding: 0;
+  }
+
+  .block-hear-me-block.is-hear-me-collapsed.hear-me-dock-left {
+    left: 0.75rem;
+    right: auto;
+  }
+
+  .hear-me-floating-header {
+    justify-content: space-between;
   }
 
   .hear-me-selection-controls {

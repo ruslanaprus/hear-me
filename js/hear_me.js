@@ -59,6 +59,9 @@
   ];
 
   let activeSelectionState = null;
+  let floatingUiId = 0;
+
+  const FLOATING_UI_STORAGE_PREFIX = 'Drupal.hearMe.floatingUi.';
 
   /**
    * Resolve the effective TTS language from drupalSettings, with a fallback.
@@ -102,6 +105,155 @@
     const statusEl = getStatusElement(anchorEl);
     statusEl.textContent = '';
     statusEl.hidden = true;
+  }
+
+  function getFloatingUiStorageKey(settings) {
+    const userId = settings.user?.uid || drupalSettings.user?.uid || '0';
+    return FLOATING_UI_STORAGE_PREFIX + userId;
+  }
+
+  function loadFloatingUiState(settings) {
+    const state = {
+      collapsed: false,
+      dock: 'right',
+    };
+
+    try {
+      const storedState = window.localStorage.getItem(getFloatingUiStorageKey(settings));
+      if (!storedState) {
+        return state;
+      }
+
+      const parsedState = JSON.parse(storedState);
+      state.collapsed = parsedState.collapsed === true;
+
+      if (parsedState.dock === 'left' || parsedState.dock === 'right') {
+        state.dock = parsedState.dock;
+      }
+    }
+    catch (e) {
+      return state;
+    }
+
+    return state;
+  }
+
+  function saveFloatingUiState(settings, state) {
+    try {
+      window.localStorage.setItem(getFloatingUiStorageKey(settings), JSON.stringify({
+        collapsed: state.collapsed === true,
+        dock: state.dock === 'left' ? 'left' : 'right',
+      }));
+    }
+    catch (e) {}
+  }
+
+  function findDirectChildByClass(parent, className) {
+    return Array.from(parent.children).find(function (child) {
+      return child.classList.contains(className);
+    }) || null;
+  }
+
+  function createPanelActionButton(className, action, labelText) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = className;
+    button.setAttribute('data-action', action);
+    button.setAttribute('data-hear-me-control', 'true');
+    button.textContent = labelText;
+
+    return button;
+  }
+
+  function applyFloatingUiState(ui, state) {
+    const collapsed = state.collapsed === true;
+    const dock = state.dock === 'left' ? 'left' : 'right';
+
+    ui.blockRoot.classList.toggle('is-hear-me-collapsed', collapsed);
+    ui.blockRoot.classList.toggle('hear-me-dock-left', dock === 'left');
+    ui.blockRoot.classList.toggle('hear-me-dock-right', dock === 'right');
+    ui.body.hidden = collapsed;
+    ui.dockButton.hidden = collapsed;
+
+    ui.collapseButton.classList.toggle('is-fab', collapsed);
+    ui.collapseButton.setAttribute('aria-controls', ui.body.id);
+    ui.collapseButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    ui.collapseButton.setAttribute(
+      'aria-label',
+      collapsed ? Drupal.t('Expand HearMe controls') : Drupal.t('Minimize HearMe controls'),
+    );
+    ui.collapseButton.textContent = collapsed ? '🔊' : Drupal.t('Minimize');
+
+    ui.dockButton.textContent = dock === 'right' ? Drupal.t('Dock left') : Drupal.t('Dock right');
+    ui.dockButton.setAttribute(
+      'aria-label',
+      dock === 'right' ? Drupal.t('Move HearMe controls to the left') : Drupal.t('Move HearMe controls to the right'),
+    );
+  }
+
+  function ensureFloatingUi(playButton, settings) {
+    const contentRoot = playButton.closest('.block__content') || playButton.parentElement;
+    const blockRoot = playButton.closest('.block-hear-me-block') || playButton.closest('.block-hear-me') || contentRoot;
+    let header = findDirectChildByClass(contentRoot, 'hear-me-floating-header');
+    let body = findDirectChildByClass(contentRoot, 'hear-me-panel-body');
+
+    blockRoot.classList.add('hear-me-floating-block');
+    blockRoot.setAttribute('data-hear-me-control', 'true');
+
+    if (!header || !body) {
+      const existingChildren = Array.from(contentRoot.childNodes);
+
+      header = document.createElement('div');
+      header.className = 'hear-me-floating-header';
+      header.setAttribute('data-hear-me-control', 'true');
+
+      body = document.createElement('div');
+      body.className = 'hear-me-panel-body';
+      body.id = 'hear-me-panel-body-' + (++floatingUiId);
+      body.setAttribute('data-hear-me-control', 'true');
+
+      contentRoot.appendChild(header);
+      contentRoot.appendChild(body);
+      existingChildren.forEach(function (child) {
+        body.appendChild(child);
+      });
+    }
+
+    if (!body.id) {
+      body.id = 'hear-me-panel-body-' + (++floatingUiId);
+    }
+
+    let dockButton = header.querySelector('[data-action="hear-me-dock"]');
+    if (!dockButton) {
+      dockButton = createPanelActionButton(
+        'hear-me-panel-action hear-me-dock-toggle',
+        'hear-me-dock',
+        Drupal.t('Dock left'),
+      );
+      header.appendChild(dockButton);
+    }
+
+    let collapseButton = header.querySelector('[data-action="hear-me-collapse"]');
+    if (!collapseButton) {
+      collapseButton = createPanelActionButton(
+        'hear-me-panel-action hear-me-collapse-toggle',
+        'hear-me-collapse',
+        Drupal.t('Minimize'),
+      );
+      header.appendChild(collapseButton);
+    }
+
+    const ui = {
+      blockRoot: blockRoot,
+      body: body,
+      dockButton: dockButton,
+      collapseButton: collapseButton,
+      state: loadFloatingUiState(settings),
+    };
+
+    applyFloatingUiState(ui, ui.state);
+
+    return ui;
   }
 
   /**
@@ -827,6 +979,7 @@
         el.setAttribute('data-hear-me-control', 'true');
         el.type = 'button';
 
+        const floatingUi = ensureFloatingUi(el, settings);
         const statusEl = getStatusElement(el);
         const audioEl = ensureBlockAudio(el, statusEl);
 
@@ -839,6 +992,7 @@
           audioEl: audioEl,
           hoveredCandidate: null,
           settings: settings,
+          floatingUi: floatingUi,
           inspecting: false,
           candidateSelectors: [],
           keyboardCandidates: [],
@@ -850,6 +1004,22 @@
           onCaptureClick: null,
           onKeyDown: null,
         };
+
+        floatingUi.collapseButton.addEventListener('click', function () {
+          if (activeSelectionState) {
+            stopSelectionMode(activeSelectionState, { clearStatus: true });
+          }
+
+          floatingUi.state.collapsed = !floatingUi.state.collapsed;
+          applyFloatingUiState(floatingUi, floatingUi.state);
+          saveFloatingUiState(settings, floatingUi.state);
+        });
+
+        floatingUi.dockButton.addEventListener('click', function () {
+          floatingUi.state.dock = floatingUi.state.dock === 'right' ? 'left' : 'right';
+          applyFloatingUiState(floatingUi, floatingUi.state);
+          saveFloatingUiState(settings, floatingUi.state);
+        });
 
         state.controlRoot.addEventListener('change', function () {
           if (state.inspecting) {

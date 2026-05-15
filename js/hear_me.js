@@ -447,7 +447,7 @@
 
       const selectButton = document.createElement('button');
       selectButton.type = 'button';
-      selectButton.className = 'hear-me-select-toggle';
+      selectButton.className = 'hear-me-select-toggle hear-me-control-button';
       selectButton.setAttribute('data-action', 'tts-select-section');
       selectButton.setAttribute('aria-pressed', 'false');
       selectButton.setAttribute('data-hear-me-control', 'true');

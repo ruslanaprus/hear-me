@@ -51,6 +51,12 @@ class HearMeBlock extends BlockBase implements ContainerFactoryPluginInterface {
     );
   }
 
+  public function defaultConfiguration(): array {
+    return [
+      'label_display' => '0',
+    ] + parent::defaultConfiguration();
+  }
+
   public function build(): array {
     $currentLangcode = $this->languageManager->getCurrentLanguage()->getId();
     $supportedLangs = $this->ttsService->getSupportedLanguages();
@@ -65,7 +71,7 @@ class HearMeBlock extends BlockBase implements ContainerFactoryPluginInterface {
         '#tag'        => 'button',
         '#value'      => '🔊 ' . $this->t('Listen to this page'),
         '#attributes' => [
-          'class'       => ['hear-me-block'],
+          'class'       => ['hear-me-block', 'hear-me-control-button'],
           'aria-label'  => $this->t('Play text-to-speech for this page'),
           'data-action' => 'tts-page',
         ],

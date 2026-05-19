@@ -10,6 +10,7 @@ use Drupal\Core\Form\FormStateInterface;
 use Drupal\hear_me\Plugin\TtsProvider\TtsProviderConfigurableInterface;
 use Drupal\hear_me\Service\HearMeService;
 use Drupal\hear_me\Service\HearMeInputValidator;
+use Drupal\hear_me\Service\TtsCacheManager;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 class HearMeSettingsForm extends ConfigFormBase {
@@ -23,15 +24,19 @@ class HearMeSettingsForm extends ConfigFormBase {
    */
   protected EntityTypeManagerInterface $entityTypeManager;
 
+  protected TtsCacheManager $cacheManager;
+
   public function __construct(
     ConfigFactoryInterface $configFactory,
     TypedConfigManagerInterface $typedConfigManager,
     HearMeService $ttsService,
     EntityTypeManagerInterface $entityTypeManager,
+    TtsCacheManager $cacheManager,
   ) {
     parent::__construct($configFactory, $typedConfigManager);
     $this->ttsService        = $ttsService;
     $this->entityTypeManager = $entityTypeManager;
+    $this->cacheManager      = $cacheManager;
   }
 
   public static function create(ContainerInterface $container): static {
@@ -40,6 +45,7 @@ class HearMeSettingsForm extends ConfigFormBase {
       $container->get('config.typed'),
       $container->get('hear_me.service'),
       $container->get('entity_type.manager'),
+      $container->get('hear_me.cache_manager'),
     );
   }
 
@@ -83,8 +89,155 @@ class HearMeSettingsForm extends ConfigFormBase {
     $form['cache_enabled'] = [
       '#type'          => 'checkbox',
       '#title'         => $this->t('Enable file-based caching'),
-      '#description'   => $this->t('Cache synthesised audio files to avoid re-generating identical requests.'),
+      '#description'   => $this->t('Cache synthesised runtime playback audio files to avoid re-generating identical requests. If disabled, click-triggered playback is returned directly and not persisted.'),
       '#default_value' => $config->get('cache_enabled') ?? TRUE,
+    ];
+
+    $stats = $this->cacheManager->getStats();
+    $form['runtime_cache'] = [
+      '#type' => 'details',
+      '#title' => $this->t('Runtime cache retention'),
+      '#open' => TRUE,
+      '#description' => $this->t('Controls only runtime playback cache entries. Queue-generated media attached to content is not purged by these limits.'),
+    ];
+
+    $form['runtime_cache']['cache_inline_ttl'] = [
+      '#type' => 'number',
+      '#title' => $this->t('Inline cache TTL'),
+      '#description' => $this->t('Seconds to keep audio generated from inline <tts> buttons. Set to 0 to disable persistent inline caching.'),
+      '#default_value' => $config->get('cache_inline_ttl') ?? 2592000,
+      '#min' => 0,
+      '#step' => 1,
+      '#required' => TRUE,
+    ];
+
+    $form['runtime_cache']['cache_page_ttl'] = [
+      '#type' => 'number',
+      '#title' => $this->t('Whole-page cache TTL'),
+      '#description' => $this->t('Seconds to keep audio generated from the block whole-page action. Keep this short because the text is extracted from the rendered DOM.'),
+      '#default_value' => $config->get('cache_page_ttl') ?? 86400,
+      '#min' => 0,
+      '#step' => 1,
+      '#required' => TRUE,
+    ];
+
+    $form['runtime_cache']['cache_selection_ttl'] = [
+      '#type' => 'number',
+      '#title' => $this->t('Selected text cache TTL'),
+      '#description' => $this->t('Seconds to keep audio generated from selected text or selected sections. Set to 0 to avoid caching ad-hoc user selections.'),
+      '#default_value' => $config->get('cache_selection_ttl') ?? 3600,
+      '#min' => 0,
+      '#step' => 1,
+      '#required' => TRUE,
+    ];
+
+    $form['runtime_cache']['cache_ad_hoc_ttl'] = [
+      '#type' => 'number',
+      '#title' => $this->t('Ad-hoc cache TTL'),
+      '#description' => $this->t('Fallback TTL for API requests that do not declare a known source.'),
+      '#default_value' => $config->get('cache_ad_hoc_ttl') ?? 0,
+      '#min' => 0,
+      '#step' => 1,
+      '#required' => TRUE,
+    ];
+
+    $form['runtime_cache']['cache_max_files'] = [
+      '#type' => 'number',
+      '#title' => $this->t('Maximum runtime cache files'),
+      '#description' => $this->t('Oldest runtime cache entries are purged when this count is exceeded. Set to 0 for no file-count limit.'),
+      '#default_value' => $config->get('cache_max_files') ?? 5000,
+      '#min' => 0,
+      '#step' => 1,
+      '#required' => TRUE,
+    ];
+
+    $form['runtime_cache']['cache_max_total_mb'] = [
+      '#type' => 'number',
+      '#title' => $this->t('Maximum runtime cache size'),
+      '#description' => $this->t('Maximum tracked runtime cache size in MB. Oldest entries are purged first. Set to 0 for no size limit.'),
+      '#default_value' => $config->get('cache_max_total_mb') ?? 512,
+      '#min' => 0,
+      '#step' => 1,
+      '#required' => TRUE,
+    ];
+
+    $form['runtime_cache']['cache_stats'] = [
+      '#type' => 'item',
+      '#title' => $this->t('Current tracked runtime cache'),
+      '#markup' => $this->t('@count file(s), @size MB.', [
+        '@count' => $stats['count'],
+        '@size' => number_format($stats['bytes'] / 1048576, 2),
+      ]),
+    ];
+
+    $form['runtime_cache']['clear_runtime_cache'] = [
+      '#type' => 'submit',
+      '#value' => $this->t('Clear generated runtime audio cache'),
+      '#submit' => ['::clearRuntimeCacheSubmit'],
+      '#limit_validation_errors' => [],
+    ];
+
+    $form['rate_limits'] = [
+      '#type' => 'details',
+      '#title' => $this->t('Rate limits and quotas'),
+      '#open' => TRUE,
+      '#description' => $this->t('Uses Drupal Flood API. Set any limit to 0 to disable that specific throttle.'),
+    ];
+
+    $form['rate_limits']['rate_limit_window_seconds'] = [
+      '#type' => 'number',
+      '#title' => $this->t('Short rate-limit window'),
+      '#description' => $this->t('Window length in seconds for user/IP/role throttles.'),
+      '#default_value' => $config->get('rate_limit_window_seconds') ?? 60,
+      '#min' => 1,
+      '#step' => 1,
+      '#required' => TRUE,
+    ];
+
+    $form['rate_limits']['rate_limit_user_requests'] = [
+      '#type' => 'number',
+      '#title' => $this->t('Requests per user per window'),
+      '#default_value' => $config->get('rate_limit_user_requests') ?? 20,
+      '#min' => 0,
+      '#step' => 1,
+      '#required' => TRUE,
+    ];
+
+    $form['rate_limits']['rate_limit_ip_requests'] = [
+      '#type' => 'number',
+      '#title' => $this->t('Requests per IP per window'),
+      '#default_value' => $config->get('rate_limit_ip_requests') ?? 60,
+      '#min' => 0,
+      '#step' => 1,
+      '#required' => TRUE,
+    ];
+
+    $form['rate_limits']['rate_limit_role_requests'] = [
+      '#type' => 'number',
+      '#title' => $this->t('Requests per role set per window'),
+      '#description' => $this->t('Optional aggregate throttle for all users sharing the same role set. Disabled by default.'),
+      '#default_value' => $config->get('rate_limit_role_requests') ?? 0,
+      '#min' => 0,
+      '#step' => 1,
+      '#required' => TRUE,
+    ];
+
+    $form['rate_limits']['daily_user_quota'] = [
+      '#type' => 'number',
+      '#title' => $this->t('Daily requests per user'),
+      '#default_value' => $config->get('daily_user_quota') ?? 500,
+      '#min' => 0,
+      '#step' => 1,
+      '#required' => TRUE,
+    ];
+
+    $form['rate_limits']['monthly_user_quota'] = [
+      '#type' => 'number',
+      '#title' => $this->t('Monthly requests per user'),
+      '#default_value' => $config->get('monthly_user_quota') ?? 5000,
+      '#min' => 0,
+      '#step' => 1,
+      '#required' => TRUE,
     ];
 
     $form['max_request_bytes'] = [
@@ -137,6 +290,7 @@ class HearMeSettingsForm extends ConfigFormBase {
     $form['provider_settings'] = [
       '#type'       => 'fieldset',
       '#title'      => $this->t('Provider Settings'),
+      '#tree'       => TRUE,
       '#attributes' => ['id' => 'provider-settings-wrapper'],
     ];
 
@@ -151,6 +305,30 @@ class HearMeSettingsForm extends ConfigFormBase {
 
   public function validateForm(array &$form, FormStateInterface $form_state): void {
     parent::validateForm($form, $form_state);
+
+    $nonNegativeFields = [
+      'cache_inline_ttl' => $this->t('Inline cache TTL'),
+      'cache_page_ttl' => $this->t('Whole-page cache TTL'),
+      'cache_selection_ttl' => $this->t('Selected text cache TTL'),
+      'cache_ad_hoc_ttl' => $this->t('Ad-hoc cache TTL'),
+      'cache_max_files' => $this->t('Maximum runtime cache files'),
+      'cache_max_total_mb' => $this->t('Maximum runtime cache size'),
+      'rate_limit_user_requests' => $this->t('Requests per user per window'),
+      'rate_limit_ip_requests' => $this->t('Requests per IP per window'),
+      'rate_limit_role_requests' => $this->t('Requests per role set per window'),
+      'daily_user_quota' => $this->t('Daily requests per user'),
+      'monthly_user_quota' => $this->t('Monthly requests per user'),
+    ];
+
+    foreach ($nonNegativeFields as $field => $label) {
+      if ((int) $form_state->getValue($field) < 0) {
+        $form_state->setErrorByName($field, $this->t('@label must be 0 or greater.', ['@label' => $label]));
+      }
+    }
+
+    if ((int) $form_state->getValue('rate_limit_window_seconds') < 1) {
+      $form_state->setErrorByName('rate_limit_window_seconds', $this->t('Short rate-limit window must be at least 1 second.'));
+    }
 
     $maxRequestBytes = (int) $form_state->getValue('max_request_bytes');
     if ($maxRequestBytes < HearMeInputValidator::MIN_REQUEST_BYTES || $maxRequestBytes > HearMeInputValidator::ABSOLUTE_MAX_REQUEST_BYTES) {
@@ -184,6 +362,18 @@ class HearMeSettingsForm extends ConfigFormBase {
     $this->configFactory->getEditable('hear_me.settings')
       ->set('provider',        $providerKey)
       ->set('cache_enabled',   (bool) $form_state->getValue('cache_enabled'))
+      ->set('cache_inline_ttl', (int) $form_state->getValue('cache_inline_ttl'))
+      ->set('cache_page_ttl', (int) $form_state->getValue('cache_page_ttl'))
+      ->set('cache_selection_ttl', (int) $form_state->getValue('cache_selection_ttl'))
+      ->set('cache_ad_hoc_ttl', (int) $form_state->getValue('cache_ad_hoc_ttl'))
+      ->set('cache_max_files', (int) $form_state->getValue('cache_max_files'))
+      ->set('cache_max_total_mb', (int) $form_state->getValue('cache_max_total_mb'))
+      ->set('rate_limit_window_seconds', (int) $form_state->getValue('rate_limit_window_seconds'))
+      ->set('rate_limit_user_requests', (int) $form_state->getValue('rate_limit_user_requests'))
+      ->set('rate_limit_ip_requests', (int) $form_state->getValue('rate_limit_ip_requests'))
+      ->set('rate_limit_role_requests', (int) $form_state->getValue('rate_limit_role_requests'))
+      ->set('daily_user_quota', (int) $form_state->getValue('daily_user_quota'))
+      ->set('monthly_user_quota', (int) $form_state->getValue('monthly_user_quota'))
       ->set('max_request_bytes', (int) $form_state->getValue('max_request_bytes'))
       ->set('max_text_length', (int) $form_state->getValue('max_text_length'))
       ->set('tts_audio_field', $form_state->getValue('tts_audio_field'))
@@ -195,6 +385,16 @@ class HearMeSettingsForm extends ConfigFormBase {
     }
 
     parent::submitForm($form, $form_state);
+  }
+
+  public function clearRuntimeCacheSubmit(array &$form, FormStateInterface $form_state): void {
+    $deleted = $this->cacheManager->clearRuntimeCache();
+    $this->messenger()->addStatus($this->formatPlural(
+      $deleted,
+      'Deleted 1 generated runtime audio cache item.',
+      'Deleted @count generated runtime audio cache items.',
+    ));
+    $form_state->setRebuild(TRUE);
   }
 
 }

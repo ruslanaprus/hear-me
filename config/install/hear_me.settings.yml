@@ -1,5 +1,17 @@
 provider: 'piper'
 cache_enabled: true
+cache_inline_ttl: 2592000
+cache_page_ttl: 86400
+cache_selection_ttl: 3600
+cache_ad_hoc_ttl: 0
+cache_max_files: 5000
+cache_max_total_mb: 512
+rate_limit_window_seconds: 60
+rate_limit_user_requests: 20
+rate_limit_ip_requests: 60
+rate_limit_role_requests: 0
+daily_user_quota: 500
+monthly_user_quota: 5000
 tts_audio_field: 'field_tts_audio'
 queue_bundles: []
 max_request_bytes: 32768

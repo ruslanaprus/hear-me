@@ -10,15 +10,36 @@ services:
       - '@config.factory'
       - '@hear_me.service'
 
+  # Runtime audio cache metadata and retention manager
+  hear_me.cache_manager:
+    class: Drupal\hear_me\Service\TtsCacheManager
+    arguments:
+      - '@database'
+      - '@config.factory'
+      - '@file_system'
+      - '@entity_type.manager'
+      - '@datetime.time'
+      - '@logger.factory'
+
+  # Flood API throttle and quota manager
+  hear_me.rate_limiter:
+    class: Drupal\hear_me\Service\HearMeRateLimiter
+    arguments:
+      - '@config.factory'
+      - '@flood'
+      - '@current_user'
+      - '@request_stack'
+
   # Central orchestrator service
   hear_me.service:
     class: Drupal\hear_me\Service\HearMeService
     arguments:
       - '@config.factory'
       - !tagged_iterator { tag: hear_me.provider, index_by: provider_key }
-      - '@file_system'
       - '@entity_type.manager'
       - '@hear_me.file_helper'
+      - '@hear_me.cache_manager'
+      - '@lock'
       - '@logger.factory'
 
   # Piper provider

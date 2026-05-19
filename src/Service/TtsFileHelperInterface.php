@@ -23,10 +23,12 @@ interface TtsFileHelperInterface {
    *   The provider key (e.g. 'piper').
    * @param string $extension
    *   File extension without leading dot (e.g. 'wav').
+   * @param string $cacheSalt
+   *   Optional cache salt for provider configuration or source context.
    *
    * @return string
    *   A stream-wrapper URI such as 'public://tts/<hash>.wav'.
    */
-  public function buildTtsUri(string $text, string $lang, string $providerKey, string $extension): string;
+  public function buildTtsUri(string $text, string $lang, string $providerKey, string $extension, string $cacheSalt = ''): string;
 
 }

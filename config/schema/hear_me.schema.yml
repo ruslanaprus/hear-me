@@ -8,6 +8,42 @@ hear_me.settings:
     cache_enabled:
       type: boolean
       label: 'Enable file-based caching'
+    cache_inline_ttl:
+      type: integer
+      label: 'Inline TTS cache TTL in seconds'
+    cache_page_ttl:
+      type: integer
+      label: 'Page TTS cache TTL in seconds'
+    cache_selection_ttl:
+      type: integer
+      label: 'Selected text TTS cache TTL in seconds'
+    cache_ad_hoc_ttl:
+      type: integer
+      label: 'Ad-hoc TTS cache TTL in seconds'
+    cache_max_files:
+      type: integer
+      label: 'Maximum number of runtime audio cache files'
+    cache_max_total_mb:
+      type: integer
+      label: 'Maximum runtime audio cache size in megabytes'
+    rate_limit_window_seconds:
+      type: integer
+      label: 'Sliding rate limit window in seconds'
+    rate_limit_user_requests:
+      type: integer
+      label: 'Maximum TTS requests per user per rate-limit window'
+    rate_limit_ip_requests:
+      type: integer
+      label: 'Maximum TTS requests per IP per rate-limit window'
+    rate_limit_role_requests:
+      type: integer
+      label: 'Maximum TTS requests per role set per rate-limit window'
+    daily_user_quota:
+      type: integer
+      label: 'Maximum TTS requests per user per day'
+    monthly_user_quota:
+      type: integer
+      label: 'Maximum TTS requests per user per month'
     tts_audio_field:
       type: string
       label: 'Machine name of the node field used to attach TTS audio media'

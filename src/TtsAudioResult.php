@@ -13,10 +13,16 @@ final class TtsAudioResult {
 
   public readonly string $extension;
 
-  public function __construct(string $bytes, string $mimeType, string $extension) {
+  public readonly ?string $uri;
+
+  public readonly ?int $fid;
+
+  public function __construct(string $bytes, string $mimeType, string $extension, ?string $uri = NULL, ?int $fid = NULL) {
     $this->bytes = $bytes;
     $this->mimeType = $mimeType;
     $this->extension = preg_replace('/[^a-z0-9]/', '', strtolower($extension)) ?: 'bin';
+    $this->uri = $uri;
+    $this->fid = $fid;
   }
 
 }

@@ -56,7 +56,9 @@ class HearMeInputValidator {
       return TtsInputValidationResult::invalid('Unsupported language');
     }
 
-    return TtsInputValidationResult::valid($text, $resolvedLang);
+    $source = $this->normalizeSource((string) ($data['source'] ?? 'adhoc'));
+
+    return TtsInputValidationResult::valid($text, $resolvedLang, $source);
   }
 
   private function getMaxRequestBytes(): int {
@@ -108,6 +110,11 @@ class HearMeInputValidator {
 
     $shortCode = substr($lang, 0, 2);
     return $supportedLangs[$shortCode] ?? NULL;
+  }
+
+  private function normalizeSource(string $source): string {
+    $source = strtolower(trim($source));
+    return in_array($source, ['inline', 'page', 'selection', 'adhoc'], TRUE) ? $source : 'adhoc';
   }
 
 }

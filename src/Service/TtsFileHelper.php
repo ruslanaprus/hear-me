@@ -10,9 +10,10 @@ namespace Drupal\hear_me\Service;
  */
 class TtsFileHelper implements TtsFileHelperInterface {
 
-  public function buildTtsUri(string $text, string $lang, string $providerKey, string $extension): string {
+  public function buildTtsUri(string $text, string $lang, string $providerKey, string $extension, string $cacheSalt = ''): string {
     $safeExtension = preg_replace('/[^a-z0-9]/', '', strtolower($extension)) ?: 'bin';
-    return self::TTS_URI_BASE . md5($text . $lang . $providerKey . $safeExtension) . '.' . $safeExtension;
+    $hash = hash('sha256', implode("\0", [$text, strtolower($lang), $providerKey, $safeExtension, $cacheSalt]));
+    return self::TTS_URI_BASE . $hash . '.' . $safeExtension;
   }
 
 }

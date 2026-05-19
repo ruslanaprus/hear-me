@@ -1,0 +1,158 @@
+<?php
+
+/**
+ * Implements hook_schema().
+ */
+function hear_me_schema(): array {
+  $schema['hear_me_audio_cache'] = [
+    'description' => 'Tracks generated HearMe runtime audio cache files.',
+    'fields' => [
+      'cid' => [
+        'description' => 'Stable cache identifier for the generated audio.',
+        'type' => 'varchar',
+        'length' => 128,
+        'not null' => TRUE,
+      ],
+      'uri' => [
+        'description' => 'Stream-wrapper URI of the generated audio file.',
+        'type' => 'varchar',
+        'length' => 512,
+        'not null' => TRUE,
+      ],
+      'fid' => [
+        'description' => 'Managed file ID, when a File entity exists.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => FALSE,
+      ],
+      'source' => [
+        'description' => 'Request source, e.g. inline, page, selection, adhoc, or entity.',
+        'type' => 'varchar',
+        'length' => 32,
+        'not null' => TRUE,
+        'default' => 'adhoc',
+      ],
+      'provider' => [
+        'description' => 'TTS provider key used to generate the audio.',
+        'type' => 'varchar',
+        'length' => 64,
+        'not null' => TRUE,
+      ],
+      'langcode' => [
+        'description' => 'Language code used to generate the audio.',
+        'type' => 'varchar',
+        'length' => 32,
+        'not null' => TRUE,
+      ],
+      'text_hash' => [
+        'description' => 'SHA-256 hash of the normalized source text.',
+        'type' => 'varchar',
+        'length' => 64,
+        'not null' => TRUE,
+      ],
+      'config_hash' => [
+        'description' => 'SHA-256 hash of provider configuration that affects synthesis.',
+        'type' => 'varchar',
+        'length' => 64,
+        'not null' => TRUE,
+      ],
+      'extension' => [
+        'description' => 'Generated audio file extension.',
+        'type' => 'varchar',
+        'length' => 16,
+        'not null' => TRUE,
+      ],
+      'mime_type' => [
+        'description' => 'Generated audio MIME type.',
+        'type' => 'varchar',
+        'length' => 128,
+        'not null' => TRUE,
+      ],
+      'filesize' => [
+        'description' => 'Generated audio file size in bytes.',
+        'type' => 'int',
+        'size' => 'big',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ],
+      'created' => [
+        'description' => 'Unix timestamp when this cache item was created.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'changed' => [
+        'description' => 'Unix timestamp when this cache item was last changed.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'last_accessed' => [
+        'description' => 'Unix timestamp when this cache item was last read.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'expires' => [
+        'description' => 'Unix timestamp when this cache item expires; 0 means permanent.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ],
+      'access_count' => [
+        'description' => 'Number of times this cache item has been served.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ],
+    ],
+    'primary key' => ['cid'],
+    'indexes' => [
+      'uri' => ['uri'],
+      'fid' => ['fid'],
+      'source' => ['source'],
+      'expires' => ['expires'],
+      'last_accessed' => ['last_accessed'],
+      'provider_lang' => ['provider', 'langcode'],
+    ],
+  ];
+
+  return $schema;
+}
+
+/**
+ * Adds runtime cache metadata storage and hardening defaults.
+ */
+function hear_me_update_11001(): void {
+  $schema = \Drupal::database()->schema();
+  if (!$schema->tableExists('hear_me_audio_cache')) {
+    $module_schema = hear_me_schema();
+    $schema->createTable('hear_me_audio_cache', $module_schema['hear_me_audio_cache']);
+  }
+
+  $config = \Drupal::configFactory()->getEditable('hear_me.settings');
+  $defaults = [
+    'cache_inline_ttl' => 2592000,
+    'cache_page_ttl' => 86400,
+    'cache_selection_ttl' => 3600,
+    'cache_ad_hoc_ttl' => 0,
+    'cache_max_files' => 5000,
+    'cache_max_total_mb' => 512,
+    'rate_limit_window_seconds' => 60,
+    'rate_limit_user_requests' => 20,
+    'rate_limit_ip_requests' => 60,
+    'rate_limit_role_requests' => 0,
+    'daily_user_quota' => 500,
+    'monthly_user_quota' => 5000,
+  ];
+
+  foreach ($defaults as $key => $value) {
+    if ($config->get($key) === NULL) {
+      $config->set($key, $value);
+    }
+  }
+  $config->save();
+}

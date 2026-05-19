@@ -192,3 +192,10 @@ function hear_me_entity_insert(\Drupal\Core\Entity\EntityInterface $entity) {
     'lang' => $lang,
   ]);
 }
+
+/**
+ * Implements hook_cron().
+ */
+function hear_me_cron() {
+  \Drupal::service('hear_me.cache_manager')->cleanup();
+}

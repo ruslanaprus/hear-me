@@ -275,6 +275,7 @@
    * @param {string} text - Plain text to synthesise.
    * @param {string} lang - BCP-47 language code.
    * @param {HTMLAudioElement} audioEl - The <audio> element to play into.
+   * @param {string} source - Request source used by Drupal cache policy.
    */
   var csrfTokenPromise = null;
 
@@ -287,8 +288,9 @@
     return csrfTokenPromise;
   }
 
-  function fetchAndPlay(text, lang, audioEl) {
+  function fetchAndPlay(text, lang, audioEl, source) {
     const ttsUrl = drupalSettings.hear_me?.tts_url || Drupal.url('hear-me/tts');
+    const requestSource = source || 'adhoc';
 
     showStatus(audioEl, Drupal.t('Generating audio...'));
 
@@ -300,7 +302,7 @@
             'Content-Type': 'application/json',
             'X-CSRF-Token': token,
           },
-          body: JSON.stringify({ text: text, lang: lang }),
+          body: JSON.stringify({ text: text, lang: lang, source: requestSource }),
         });
       })
       .then(function (res) {
@@ -800,7 +802,7 @@
     stopSelectionMode(state, { clearStatus: true });
 
     const lang = resolveLang(state.settings, null);
-    fetchAndPlay(text, lang, state.audioEl);
+    fetchAndPlay(text, lang, state.audioEl, 'selection');
   }
 
   function cycleSelectionCandidate(state, direction) {
@@ -1008,7 +1010,7 @@
             return;
           }
 
-          fetchAndPlay(text, lang, audioEl);
+          fetchAndPlay(text, lang, audioEl, 'inline');
         });
       });
 
@@ -1084,7 +1086,7 @@
           const selectedText = getSelectedText();
 
           if (selectedText) {
-            fetchAndPlay(selectedText, lang, audioEl);
+            fetchAndPlay(selectedText, lang, audioEl, 'selection');
             return;
           }
 
@@ -1098,7 +1100,7 @@
             return;
           }
 
-          fetchAndPlay(text, lang, audioEl);
+          fetchAndPlay(text, lang, audioEl, 'page');
         });
       });
     }

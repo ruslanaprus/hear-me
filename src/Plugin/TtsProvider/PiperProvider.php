@@ -101,12 +101,13 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
   }
 
   public function submitConfigForm(array &$form, FormStateInterface $form_state): void {
-    $rawLangs = $form_state->getValue(['provider_settings', 'supported_langs']) ?? '';
+    $providerSettings = $form_state->getValue('provider_settings') ?? [];
+    $rawLangs = $providerSettings['supported_langs'] ?? $form_state->getValue('supported_langs') ?? '';
     $langs = array_values(array_filter(array_map('trim', explode(',', $rawLangs))));
 
     $this->configFactory->getEditable('hear_me.provider.piper')
-      ->set('endpoint',        $form_state->getValue(['provider_settings', 'endpoint']))
-      ->set('default_lang',    $form_state->getValue(['provider_settings', 'default_lang']))
+      ->set('endpoint',        $providerSettings['endpoint'] ?? $form_state->getValue('endpoint'))
+      ->set('default_lang',    $providerSettings['default_lang'] ?? $form_state->getValue('default_lang'))
       ->set('supported_langs', $langs)
       ->save();
   }
@@ -124,6 +125,8 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
     try {
       $response = $this->httpClient->request('POST', $endpoint, [
         'json' => ['text' => $text, 'lang' => $lang],
+        'connect_timeout' => 5,
+        'timeout' => 30,
       ]);
     }
     catch (GuzzleException $e) {

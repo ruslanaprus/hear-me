@@ -1,6 +1,8 @@
 <?php
 
+use Drupal\Component\Utility\Html;
 use Drupal\Core\File\FileSystemInterface;
+use Drupal\Core\Language\LanguageInterface;
 use Drupal\hear_me\Service\TtsFileHelperInterface;
 
 /**
@@ -183,8 +185,20 @@ function hear_me_entity_insert(\Drupal\Core\Entity\EntityInterface $entity) {
   }
 
   $bodyText = $entity->hasField('body') ? ($entity->body->value ?? '') : '';
+  $bodyText = Html::decodeEntities(strip_tags($bodyText));
+  $bodyText = preg_replace('/[ \t\r\n]+/u', ' ', $bodyText) ?? $bodyText;
   $text = trim($entity->getTitle() . ' ' . $bodyText);
-  $lang = \Drupal::service('hear_me.service')->getDefaultLang();
+
+  $ttsService = \Drupal::service('hear_me.service');
+  $lang = $entity->language()->getId();
+  if (in_array($lang, [
+    '',
+    LanguageInterface::LANGCODE_NOT_SPECIFIED,
+    LanguageInterface::LANGCODE_NOT_APPLICABLE,
+    LanguageInterface::LANGCODE_DEFAULT,
+  ], TRUE)) {
+    $lang = $ttsService->getDefaultLang();
+  }
 
   \Drupal::queue('hear_me_tts')->createItem([
     'nid'  => $entity->id(),

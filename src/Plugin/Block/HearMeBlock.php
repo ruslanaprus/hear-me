@@ -58,6 +58,7 @@ class HearMeBlock extends BlockBase implements ContainerFactoryPluginInterface {
   }
 
   public function build(): array {
+    $providerKey = $this->ttsService->getProviderKey();
     $currentLangcode = $this->languageManager->getCurrentLanguage()->getId();
     $supportedLangs = $this->ttsService->getSupportedLanguages();
     $shortCode = strtolower(substr($currentLangcode, 0, 2));
@@ -89,7 +90,10 @@ class HearMeBlock extends BlockBase implements ContainerFactoryPluginInterface {
       ],
       '#cache' => [
         'contexts' => ['languages:language_interface'],
-        'tags'     => ['config:hear_me.settings'],
+        'tags'     => [
+          'config:hear_me.settings',
+          'config:hear_me.provider.' . $providerKey,
+        ],
         'max-age'  => Cache::PERMANENT,
       ],
       '#attached' => [

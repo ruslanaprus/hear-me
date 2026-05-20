@@ -43,6 +43,7 @@ class FilterTtsPlayback extends FilterBase implements ContainerFactoryPluginInte
   }
 
   public function process($text, $langcode): FilterProcessResult {
+    $providerKey = $this->ttsService->getProviderKey();
     $effectiveLang = ($langcode && $langcode !== 'und')
       ? $langcode
       : $this->ttsService->getDefaultLang();
@@ -74,6 +75,10 @@ class FilterTtsPlayback extends FilterBase implements ContainerFactoryPluginInte
             'csrf_token_url' => Url::fromRoute('system.csrftoken')->toString(),
           ],
         ],
+      ]);
+      $result->setCacheTags([
+        'config:hear_me.settings',
+        'config:hear_me.provider.' . $providerKey,
       ]);
     }
 

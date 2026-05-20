@@ -156,3 +156,13 @@ function hear_me_update_11001(): void {
   }
   $config->save();
 }
+
+/**
+ * Defaults runtime playback cache storage to private files.
+ */
+function hear_me_update_11002(): void {
+  $config = \Drupal::configFactory()->getEditable('hear_me.settings');
+  if ($config->get('runtime_cache_scheme') === NULL) {
+    $config->set('runtime_cache_scheme', 'private')->save();
+  }
+}

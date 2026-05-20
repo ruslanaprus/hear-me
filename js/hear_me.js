@@ -276,6 +276,7 @@
    * @param {string} lang - BCP-47 language code.
    * @param {HTMLAudioElement} audioEl - The <audio> element to play into.
    * @param {string} source - Request source used by Drupal cache policy.
+   * @param {string} cacheToken - Server-generated token for trusted cache policy.
    */
   var csrfTokenPromise = null;
 
@@ -288,9 +289,14 @@
     return csrfTokenPromise;
   }
 
-  function fetchAndPlay(text, lang, audioEl, source) {
+  function fetchAndPlay(text, lang, audioEl, source, cacheToken) {
     const ttsUrl = drupalSettings.hear_me?.tts_url || Drupal.url('hear-me/tts');
     const requestSource = source || 'adhoc';
+    const payload = { text: text, lang: lang, source: requestSource };
+
+    if (cacheToken) {
+      payload.cache_token = cacheToken;
+    }
 
     showStatus(audioEl, Drupal.t('Generating audio...'));
 
@@ -302,7 +308,7 @@
             'Content-Type': 'application/json',
             'X-CSRF-Token': token,
           },
-          body: JSON.stringify({ text: text, lang: lang, source: requestSource }),
+          body: JSON.stringify(payload),
         });
       })
       .then(function (res) {
@@ -1010,7 +1016,7 @@
             return;
           }
 
-          fetchAndPlay(text, lang, audioEl, 'inline');
+          fetchAndPlay(text, lang, audioEl, 'inline', el.dataset.cacheToken || '');
         });
       });
 

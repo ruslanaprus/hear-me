@@ -50,16 +50,18 @@ class FilterTtsPlayback extends FilterBase implements ContainerFactoryPluginInte
 
     $pattern = '/<tts>(.*?)<\/tts>/s';
     $hasTtsMarkup = FALSE;
-    $newText = preg_replace_callback($pattern, function ($matches) use ($effectiveLang, &$hasTtsMarkup) {
+    $ttsService = $this->ttsService;
+    $newText = preg_replace_callback($pattern, function ($matches) use ($effectiveLang, &$hasTtsMarkup, $ttsService) {
       $hasTtsMarkup = TRUE;
       $raw  = $matches[1];
       $lang = htmlspecialchars($effectiveLang, ENT_QUOTES, 'UTF-8');
       $plainText = html_entity_decode(strip_tags($raw), ENT_QUOTES | ENT_HTML5, 'UTF-8');
       $plainText = str_replace("\u{00A0}", ' ', $plainText);
       $escaped   = htmlspecialchars($plainText, ENT_QUOTES, 'UTF-8');
+      $cacheToken = htmlspecialchars($ttsService->buildCacheToken($plainText, $effectiveLang, 'inline'), ENT_QUOTES, 'UTF-8');
 
       return '<span class="tts-text">' . $raw . '</span>
-              <button class="tts-play" data-text="' . $escaped . '" data-lang="' . $lang . '" aria-label="Play text-to-speech" tabindex="0">🔊</button>
+              <button class="tts-play" data-text="' . $escaped . '" data-lang="' . $lang . '" data-cache-token="' . $cacheToken . '" aria-label="Play text-to-speech" tabindex="0">🔊</button>
               <audio class="tts-audio" controls hidden></audio>
               <span class="hear-me-status" role="status" aria-live="polite" hidden></span>';
     }, $text);

@@ -7,6 +7,7 @@ use Drupal\Core\Config\TypedConfigManagerInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Form\ConfigFormBase;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Session\AccountInterface;
 use Drupal\hear_me\Plugin\TtsProvider\TtsProviderConfigurableInterface;
 use Drupal\hear_me\Service\HearMeService;
 use Drupal\hear_me\Service\HearMeInputValidator;
@@ -73,6 +74,10 @@ class HearMeSettingsForm extends ConfigFormBase {
     $providerKey = $form_state->getValue('provider')
       ?? $config->get('provider')
       ?? array_key_first($providerOptions);
+    $runtimeCacheScheme = $config->get('runtime_cache_scheme') ?? 'private';
+    if (!in_array($runtimeCacheScheme, ['private', 'public'], TRUE)) {
+      $runtimeCacheScheme = 'private';
+    }
 
     $form['provider'] = [
       '#type'          => 'select',
@@ -85,6 +90,12 @@ class HearMeSettingsForm extends ConfigFormBase {
         'effect'   => 'fade',
       ],
     ];
+
+    if ($this->anonymousCanUseTts()) {
+      $form['anonymous_permission_warning'] = $this->buildWarning(
+        $this->t('The Anonymous role currently has the Use TTS playback permission. This exposes a public resource-consuming endpoint; keep strict IP limits enabled and avoid public runtime caching.')
+      );
+    }
 
     $form['cache_enabled'] = [
       '#type'          => 'checkbox',
@@ -100,6 +111,29 @@ class HearMeSettingsForm extends ConfigFormBase {
       '#open' => TRUE,
       '#description' => $this->t('Controls only runtime playback cache entries. Queue-generated media attached to content is not purged by these limits.'),
     ];
+
+    $form['runtime_cache']['runtime_cache_scheme'] = [
+      '#type' => 'radios',
+      '#title' => $this->t('Runtime cache file storage'),
+      '#description' => $this->t('Private storage is recommended because runtime playback can include selected text or authenticated page content. If private files are selected but not configured, runtime playback still works but generated audio is not persisted.'),
+      '#options' => [
+        'private' => $this->t('Private files (recommended)'),
+        'public' => $this->t('Public files'),
+      ],
+      '#default_value' => $runtimeCacheScheme,
+      '#required' => TRUE,
+    ];
+
+    if ($runtimeCacheScheme === 'private' && !$this->cacheManager->isRuntimeCacheStorageAvailable()) {
+      $form['runtime_cache']['private_storage_warning'] = $this->buildWarning(
+        $this->t('Private runtime cache storage is selected, but Drupal private files are not configured. Runtime audio will be generated on demand and returned to the browser, but it will not be persisted until private files are configured or Public files is selected.')
+      );
+    }
+    elseif ($runtimeCacheScheme === 'public') {
+      $form['runtime_cache']['public_storage_warning'] = $this->buildWarning(
+        $this->t('Public runtime cache storage can expose generated speech files by URL. Use it only for sites where generated playback audio is safe to publish.')
+      );
+    }
 
     $form['runtime_cache']['cache_inline_ttl'] = [
       '#type' => 'number',
@@ -281,7 +315,7 @@ class HearMeSettingsForm extends ConfigFormBase {
       '#description'   => $this->t(
         'When a new node of the selected type is created, its title and body '
         . 'are queued for background TTS synthesis. Leave all unchecked to '
-        . 'disable automatic pre-generation entirely.'
+        . 'disable automatic pre-generation entirely. Queue-generated media uses the installed HearMe Audio file field, which stores files publicly by default.'
       ),
       '#options'       => $bundleOptions,
       '#default_value' => $config->get('queue_bundles') ?? [],
@@ -330,6 +364,10 @@ class HearMeSettingsForm extends ConfigFormBase {
       $form_state->setErrorByName('rate_limit_window_seconds', $this->t('Short rate-limit window must be at least 1 second.'));
     }
 
+    if (!in_array($form_state->getValue('runtime_cache_scheme'), ['private', 'public'], TRUE)) {
+      $form_state->setErrorByName('runtime_cache_scheme', $this->t('Runtime cache file storage must be private or public.'));
+    }
+
     $maxRequestBytes = (int) $form_state->getValue('max_request_bytes');
     if ($maxRequestBytes < HearMeInputValidator::MIN_REQUEST_BYTES || $maxRequestBytes > HearMeInputValidator::ABSOLUTE_MAX_REQUEST_BYTES) {
       $form_state->setErrorByName('max_request_bytes', $this->t('Maximum request body size must be between @min and @max bytes.', [
@@ -362,6 +400,7 @@ class HearMeSettingsForm extends ConfigFormBase {
     $this->configFactory->getEditable('hear_me.settings')
       ->set('provider',        $providerKey)
       ->set('cache_enabled',   (bool) $form_state->getValue('cache_enabled'))
+      ->set('runtime_cache_scheme', $form_state->getValue('runtime_cache_scheme'))
       ->set('cache_inline_ttl', (int) $form_state->getValue('cache_inline_ttl'))
       ->set('cache_page_ttl', (int) $form_state->getValue('cache_page_ttl'))
       ->set('cache_selection_ttl', (int) $form_state->getValue('cache_selection_ttl'))
@@ -395,6 +434,24 @@ class HearMeSettingsForm extends ConfigFormBase {
       'Deleted @count generated runtime audio cache items.',
     ));
     $form_state->setRebuild(TRUE);
+  }
+
+  protected function anonymousCanUseTts(): bool {
+    $anonymousRole = $this->entityTypeManager
+      ->getStorage('user_role')
+      ->load(AccountInterface::ANONYMOUS_ROLE);
+
+    return $anonymousRole && $anonymousRole->hasPermission('use tts playback');
+  }
+
+  protected function buildWarning($message): array {
+    return [
+      '#type' => 'container',
+      '#attributes' => ['class' => ['messages', 'messages--warning']],
+      'message' => [
+        '#markup' => $message,
+      ],
+    ];
   }
 
 }

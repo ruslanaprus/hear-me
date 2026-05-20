@@ -11,15 +11,16 @@ final readonly class TtsInputValidationResult {
     public ?string $text,
     public ?string $lang,
     public string $source,
+    public ?string $cacheToken,
     public ?string $errorMessage,
   ) {}
 
-  public static function valid(string $text, string $lang, string $source): self {
-    return new self($text, $lang, $source, NULL);
+  public static function valid(string $text, string $lang, string $source, ?string $cacheToken = NULL): self {
+    return new self($text, $lang, $source, $cacheToken, NULL);
   }
 
   public static function invalid(string $errorMessage): self {
-    return new self(NULL, NULL, 'adhoc', $errorMessage);
+    return new self(NULL, NULL, 'adhoc', NULL, $errorMessage);
   }
 
   public function isValid(): bool {

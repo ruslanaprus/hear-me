@@ -1,5 +1,6 @@
 provider: 'piper'
 cache_enabled: true
+runtime_cache_scheme: 'private'
 cache_inline_ttl: 2592000
 cache_page_ttl: 86400
 cache_selection_ttl: 3600

@@ -57,8 +57,9 @@ class HearMeInputValidator {
     }
 
     $source = $this->normalizeSource((string) ($data['source'] ?? 'adhoc'));
+    $cacheToken = $this->normalizeCacheToken((string) ($data['cache_token'] ?? ''));
 
-    return TtsInputValidationResult::valid($text, $resolvedLang, $source);
+    return TtsInputValidationResult::valid($text, $resolvedLang, $source, $cacheToken);
   }
 
   private function getMaxRequestBytes(): int {
@@ -115,6 +116,11 @@ class HearMeInputValidator {
   private function normalizeSource(string $source): string {
     $source = strtolower(trim($source));
     return in_array($source, ['inline', 'page', 'selection', 'adhoc'], TRUE) ? $source : 'adhoc';
+  }
+
+  private function normalizeCacheToken(string $cacheToken): ?string {
+    $cacheToken = strtolower(trim($cacheToken));
+    return preg_match('/^[a-f0-9]{64}$/', $cacheToken) ? $cacheToken : NULL;
   }
 
 }

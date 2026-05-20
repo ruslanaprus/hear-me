@@ -1,4 +1,4 @@
 use tts playback:
   title: 'Use TTS playback'
-  description: 'Allows the user to trigger text-to-speech synthesis and play audio on content pages. Grant to roles that should hear the read-aloud feature (e.g. authenticated user).'
-  restrict access: false
+  description: 'Allows the user to trigger text-to-speech synthesis. This grants access to a resource-consuming endpoint; grant Anonymous access only with strict rate limits and cache privacy settings.'
+  restrict access: true

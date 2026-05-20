@@ -46,7 +46,13 @@ class HearMeController extends ControllerBase {
 
     $this->rateLimiter->register($providerKey);
 
-    $audio = $this->ttsService->getAudio($validation->text, $validation->lang, $validation->source);
+    $source = $this->ttsService->getTrustedRuntimeSource(
+      $validation->text,
+      $validation->lang,
+      $validation->source,
+      $validation->cacheToken,
+    );
+    $audio = $this->ttsService->getAudio($validation->text, $validation->lang, $source);
     if ($audio === NULL) {
       return new Response('Synthesis failed', 500);
     }

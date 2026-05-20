@@ -17,6 +17,7 @@ services:
       - '@database'
       - '@config.factory'
       - '@file_system'
+      - '@stream_wrapper_manager'
       - '@entity_type.manager'
       - '@datetime.time'
       - '@logger.factory'
@@ -41,6 +42,7 @@ services:
       - '@hear_me.cache_manager'
       - '@lock'
       - '@logger.factory'
+      - '@private_key'
 
   # Piper provider
   hear_me.provider.piper:

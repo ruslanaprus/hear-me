@@ -6,6 +6,7 @@ use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Lock\LockBackendInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
+use Drupal\Core\PrivateKey;
 use Drupal\hear_me\TtsAudioResult;
 use Drupal\hear_me\TtsSynthesisResult;
 use Drupal\media\Entity\Media;
@@ -19,6 +20,7 @@ class HearMeService {
   protected TtsCacheManager $cacheManager;
   protected LockBackendInterface $lock;
   protected \Psr\Log\LoggerInterface $logger;
+  protected PrivateKey $privateKey;
 
   public function __construct(
     ConfigFactoryInterface $configFactory,
@@ -28,6 +30,7 @@ class HearMeService {
     TtsCacheManager $cacheManager,
     LockBackendInterface $lock,
     LoggerChannelFactoryInterface $loggerFactory,
+    PrivateKey $privateKey,
   ) {
     $this->configFactory     = $configFactory;
     $this->providers         = $providers;
@@ -36,6 +39,7 @@ class HearMeService {
     $this->cacheManager      = $cacheManager;
     $this->lock              = $lock;
     $this->logger            = $loggerFactory->get('hear_me');
+    $this->privateKey        = $privateKey;
   }
 
   /**
@@ -135,6 +139,19 @@ class HearMeService {
     return $audio?->bytes;
   }
 
+  public function buildCacheToken(string $text, string $lang, string $source): string {
+    return hash_hmac('sha256', $this->buildCacheTokenPayload($text, $lang, $source), $this->privateKey->get());
+  }
+
+  public function getTrustedRuntimeSource(string $text, string $lang, string $source, ?string $cacheToken): string {
+    $source = $this->cacheManager->normalizeSource($source);
+    if ($source === 'inline' && !$this->validateCacheToken($text, $lang, $source, $cacheToken)) {
+      return 'adhoc';
+    }
+
+    return $source;
+  }
+
   private function generateAudio(string $text, string $lang, string $source, bool $forcePersistent): ?TtsAudioResult {
     $providerKey = $this->resolveProviderKey();
     $providers = $this->getProviders();
@@ -153,7 +170,7 @@ class HearMeService {
     $extension = $provider->getDefaultExtension();
     $providerConfigHash = $this->getProviderConfigHash($providerKey);
     $cid = $this->cacheManager->buildCacheId($text, $lang, $providerKey, $extension, $source, $providerConfigHash);
-    $uri = $this->cacheManager->buildUri($cid, $extension);
+    $uri = $this->cacheManager->buildUri($cid, $extension, $source);
     $ttl = $forcePersistent ? 0 : $this->cacheManager->getTtlForSource($source);
     $shouldPersist = $forcePersistent || $this->cacheManager->isRuntimeCacheEnabled($source);
     $lockName = 'hear_me_tts:' . $cid;
@@ -219,6 +236,32 @@ class HearMeService {
   private function getProviderConfigHash(string $providerKey): string {
     $providerConfig = $this->configFactory->get('hear_me.provider.' . $providerKey)->getRawData();
     return $this->cacheManager->buildProviderConfigHash($providerConfig);
+  }
+
+  private function validateCacheToken(string $text, string $lang, string $source, ?string $cacheToken): bool {
+    if (!is_string($cacheToken) || !preg_match('/^[a-f0-9]{64}$/', $cacheToken)) {
+      return FALSE;
+    }
+
+    return hash_equals($this->buildCacheToken($text, $lang, $source), $cacheToken);
+  }
+
+  private function buildCacheTokenPayload(string $text, string $lang, string $source): string {
+    $providerKey = $this->resolveProviderKey();
+    return implode("\0", [
+      'v1',
+      $this->cacheManager->normalizeSource($source),
+      hash('sha256', $this->normalizeTokenText($text)),
+      strtolower($lang),
+      $providerKey,
+      $this->getProviderConfigHash($providerKey),
+    ]);
+  }
+
+  private function normalizeTokenText(string $text): string {
+    $text = str_replace("\xc2\xa0", ' ', $text);
+    $text = preg_replace('/[ \t\r\n]+/u', ' ', $text) ?? $text;
+    return trim($text);
   }
 
   /**

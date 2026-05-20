@@ -8,6 +8,9 @@ hear_me.settings:
     cache_enabled:
       type: boolean
       label: 'Enable file-based caching'
+    runtime_cache_scheme:
+      type: string
+      label: 'Runtime audio cache stream wrapper scheme'
     cache_inline_ttl:
       type: integer
       label: 'Inline TTS cache TTL in seconds'

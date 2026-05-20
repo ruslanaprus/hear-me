@@ -9,6 +9,7 @@ use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\File\FileExists;
 use Drupal\Core\File\FileSystemInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
+use Drupal\Core\StreamWrapper\StreamWrapperManagerInterface;
 use Drupal\hear_me\TtsAudioResult;
 use Drupal\hear_me\TtsSynthesisResult;
 
@@ -17,12 +18,17 @@ use Drupal\hear_me\TtsSynthesisResult;
  */
 class TtsCacheManager {
 
+  public const RUNTIME_PRIVATE_URI_BASE = 'private://hear_me/tts/';
+
+  public const RUNTIME_PUBLIC_URI_BASE = TtsFileHelperInterface::TTS_URI_BASE;
+
   private ?bool $metadataAvailable = NULL;
 
   public function __construct(
     protected Connection $database,
     protected ConfigFactoryInterface $configFactory,
     protected FileSystemInterface $fileSystem,
+    protected StreamWrapperManagerInterface $streamWrapperManager,
     protected EntityTypeManagerInterface $entityTypeManager,
     protected TimeInterface $time,
     LoggerChannelFactoryInterface $loggerFactory,
@@ -38,11 +44,24 @@ class TtsCacheManager {
   }
 
   public function isRuntimeCacheEnabled(string $source): bool {
+    $source = $this->normalizeSource($source);
+    if ($source === 'entity') {
+      return FALSE;
+    }
+
     if (!$this->configFactory->get('hear_me.settings')->get('cache_enabled')) {
       return FALSE;
     }
 
-    return $this->getTtlForSource($source) > 0;
+    if ($this->getTtlForSource($source) <= 0) {
+      return FALSE;
+    }
+
+    if (!$this->isRuntimeCacheStorageAvailable()) {
+      return FALSE;
+    }
+
+    return TRUE;
   }
 
   public function getTtlForSource(string $source): int {
@@ -90,6 +109,7 @@ class TtsCacheManager {
 
     return hash('sha256', implode("\0", [
       $source,
+      $source === 'entity' ? 'public' : $this->getRuntimeCacheStorageKey(),
       $textHash,
       strtolower($lang),
       $providerKey,
@@ -98,8 +118,28 @@ class TtsCacheManager {
     ]));
   }
 
-  public function buildUri(string $cid, string $extension): string {
-    return TtsFileHelperInterface::TTS_URI_BASE . $cid . '.' . $this->sanitizeExtension($extension);
+  public function buildUri(string $cid, string $extension, string $source = 'adhoc'): string {
+    $source = $this->normalizeSource($source);
+    $baseUri = $source === 'entity'
+      ? TtsFileHelperInterface::TTS_URI_BASE
+      : $this->getRuntimeCacheBaseUri();
+
+    return $baseUri . $cid . '.' . $this->sanitizeExtension($extension);
+  }
+
+  public function getRuntimeCacheScheme(): string {
+    $scheme = (string) $this->configFactory->get('hear_me.settings')->get('runtime_cache_scheme');
+    return in_array($scheme, ['private', 'public'], TRUE) ? $scheme : 'private';
+  }
+
+  public function getRuntimeCacheBaseUri(): string {
+    return $this->getRuntimeCacheScheme() === 'public'
+      ? self::RUNTIME_PUBLIC_URI_BASE
+      : self::RUNTIME_PRIVATE_URI_BASE;
+  }
+
+  public function isRuntimeCacheStorageAvailable(): bool {
+    return $this->streamWrapperManager->isValidScheme($this->getRuntimeCacheScheme());
   }
 
   public function getCachedAudio(string $cid, int $ttl): ?TtsAudioResult {
@@ -174,11 +214,15 @@ class TtsCacheManager {
       return new TtsAudioResult($result->bytes, $result->mimeType, $result->extension);
     }
 
-    $directory = TtsFileHelperInterface::TTS_URI_BASE;
-    $this->fileSystem->prepareDirectory(
+    $source = $this->normalizeSource($source);
+    $directory = $this->getDirectoryFromUri($uri);
+    if (!$this->fileSystem->prepareDirectory(
       $directory,
       FileSystemInterface::CREATE_DIRECTORY | FileSystemInterface::MODIFY_PERMISSIONS,
-    );
+    )) {
+      $this->logger->error('HearMe: failed to prepare audio cache directory @directory.', ['@directory' => $directory]);
+      return new TtsAudioResult($result->bytes, $result->mimeType, $result->extension);
+    }
 
     $savedUri = $this->fileSystem->saveData($result->bytes, $uri, FileExists::Replace);
     if (!$savedUri) {
@@ -188,7 +232,6 @@ class TtsCacheManager {
 
     $fid = $this->ensureFileEntity($savedUri);
     $now = $this->time->getRequestTime();
-    $source = $this->normalizeSource($source);
     $expires = $ttl > 0 ? $now + $ttl : 0;
     $filesize = strlen($result->bytes);
 
@@ -358,7 +401,7 @@ class TtsCacheManager {
 
       $cids[] = $row->cid;
       $uri = (string) $row->uri;
-      if (!str_starts_with($uri, TtsFileHelperInterface::TTS_URI_BASE)) {
+      if (!$this->isManagedCacheUri($uri)) {
         continue;
       }
 
@@ -428,6 +471,25 @@ class TtsCacheManager {
 
   protected function sanitizeExtension(string $extension): string {
     return preg_replace('/[^a-z0-9]/', '', strtolower($extension)) ?: 'bin';
+  }
+
+  protected function getRuntimeCacheStorageKey(): string {
+    $scheme = $this->getRuntimeCacheScheme();
+    if ($scheme === 'private' && !$this->isRuntimeCacheStorageAvailable()) {
+      return 'private-unavailable';
+    }
+
+    return $scheme;
+  }
+
+  protected function getDirectoryFromUri(string $uri): string {
+    $lastSlash = strrpos($uri, '/');
+    return $lastSlash === FALSE ? $uri : substr($uri, 0, $lastSlash + 1);
+  }
+
+  protected function isManagedCacheUri(string $uri): bool {
+    return str_starts_with($uri, self::RUNTIME_PUBLIC_URI_BASE)
+      || str_starts_with($uri, self::RUNTIME_PRIVATE_URI_BASE);
   }
 
 }

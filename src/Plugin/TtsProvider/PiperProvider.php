@@ -2,11 +2,13 @@
 
 namespace Drupal\hear_me\Plugin\TtsProvider;
 
+use Drupal\Component\Utility\UrlHelper;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Language\LanguageManagerInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\Core\StringTranslation\StringTranslationTrait;
+use Drupal\Core\StringTranslation\TranslatableMarkup;
 use Drupal\hear_me\TtsSynthesisResult;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
@@ -66,11 +68,12 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
 
   public function buildConfigForm(array $form, array $config): array {
     $form['endpoint'] = [
-      '#type'          => 'textfield',
+      '#type'          => 'url',
       '#title'         => $this->t('Piper Endpoint URL'),
       '#default_value' => $config['endpoint'] ?? 'http://piper-service:5000/tts',
-      '#description'   => $this->t('Base URL of the Piper TTS microservice.'),
+      '#description'   => $this->t('Full URL of the Piper TTS microservice. Drupal sends server-side HTTP POST requests to this URL, so use only endpoints you control or trust. Do not point it at user-supplied URLs or sensitive internal metadata services.'),
       '#required'      => TRUE,
+      '#element_validate' => [[static::class, 'validateEndpointElement']],
     ];
 
     $form['supported_langs'] = [
@@ -104,12 +107,53 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
     $providerSettings = $form_state->getValue('provider_settings') ?? [];
     $rawLangs = $providerSettings['supported_langs'] ?? $form_state->getValue('supported_langs') ?? '';
     $langs = array_values(array_filter(array_map('trim', explode(',', $rawLangs))));
+    $endpoint = trim((string) ($providerSettings['endpoint'] ?? $form_state->getValue('endpoint') ?? ''));
 
     $this->configFactory->getEditable('hear_me.provider.piper')
-      ->set('endpoint',        $providerSettings['endpoint'] ?? $form_state->getValue('endpoint'))
+      ->set('endpoint',        $endpoint)
       ->set('default_lang',    $providerSettings['default_lang'] ?? $form_state->getValue('default_lang'))
       ->set('supported_langs', $langs)
       ->save();
+  }
+
+  public static function validateEndpointElement(array &$element, FormStateInterface $form_state, array &$complete_form): void {
+    $endpoint = trim((string) ($element['#value'] ?? ''));
+    $form_state->setValueForElement($element, $endpoint);
+
+    if ($endpoint === '') {
+      return;
+    }
+
+    $validationError = static::getEndpointValidationError($endpoint);
+    if ($validationError !== NULL) {
+      $form_state->setError($element, $validationError);
+    }
+  }
+
+  protected static function getEndpointValidationError(string $endpoint): ?TranslatableMarkup {
+    if (!UrlHelper::isValid($endpoint, TRUE)) {
+      return new TranslatableMarkup('The Piper endpoint must be an absolute URL, for example https://tts.example.com/tts.');
+    }
+
+    $parts = parse_url($endpoint);
+    if (!is_array($parts)) {
+      return new TranslatableMarkup('The Piper endpoint URL could not be parsed.');
+    }
+
+    $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+    if (!in_array($scheme, ['http', 'https'], TRUE)) {
+      return new TranslatableMarkup('The Piper endpoint must use HTTP or HTTPS.');
+    }
+
+    if (empty($parts['host'])) {
+      return new TranslatableMarkup('The Piper endpoint must include a host name.');
+    }
+
+    if (isset($parts['user']) || isset($parts['pass'])) {
+      return new TranslatableMarkup('Do not include usernames or passwords in the Piper endpoint URL.');
+    }
+
+    return NULL;
   }
 
   /**
@@ -120,7 +164,14 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
    */
   public function synthesize(string $text, string $lang): ?TtsSynthesisResult {
     $config   = $this->configFactory->get('hear_me.provider.piper');
-    $endpoint = $config->get('endpoint');
+    $endpoint = trim((string) $config->get('endpoint'));
+    $validationError = $endpoint === ''
+      ? new TranslatableMarkup('The Piper endpoint is empty.')
+      : static::getEndpointValidationError($endpoint);
+    if ($validationError !== NULL) {
+      $this->logger->error('Piper TTS endpoint is invalid: @message', ['@message' => (string) $validationError]);
+      return NULL;
+    }
 
     try {
       $response = $this->httpClient->request('POST', $endpoint, [

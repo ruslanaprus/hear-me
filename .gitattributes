@@ -1,0 +1,6 @@
+# Keep Drupal.org/release archives focused on installable module code.
+/.gitattributes export-ignore
+/.gitignore export-ignore
+/.env export-ignore
+/.env.* export-ignore
+/.idea export-ignore

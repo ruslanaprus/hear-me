@@ -3,6 +3,7 @@ type: module
 description: Provides text-to-speech integration with Piper microservice for accessibility.
 core_version_requirement: ^11
 package: Accessibility
+configure: hear_me.settings
 dependencies:
   - drupal:media
   - drupal:file

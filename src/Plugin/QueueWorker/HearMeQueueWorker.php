@@ -1,6 +1,6 @@
 <?php
 
-namespace Drupal\hear_me\Plugin\Queue;
+namespace Drupal\hear_me\Plugin\QueueWorker;
 
 use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
 use Drupal\Core\Queue\Attribute\QueueWorker;

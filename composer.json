@@ -1,0 +1,36 @@
+{
+    "name": "drupal/hear_me",
+    "description": "Adds text-to-speech playback controls to Drupal content pages.",
+    "type": "drupal-module",
+    "license": "GPL-2.0-or-later",
+    "homepage": "https://www.drupal.org/project/hear_me",
+    "support": {
+        "issues": "https://www.drupal.org/project/issues/hear_me",
+        "source": "https://git.drupalcode.org/project/hear_me",
+        "docs": "https://www.drupal.org/project/hear_me"
+    },
+    "keywords": [
+        "Drupal",
+        "accessibility",
+        "text-to-speech",
+        "tts",
+        "piper"
+    ],
+    "require": {
+        "php": ">=8.3",
+        "drupal/core": "^11"
+    },
+    "require-dev": {
+        "drupal/core-dev": "^11"
+    },
+    "autoload": {
+        "psr-4": {
+            "Drupal\\hear_me\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Drupal\\Tests\\hear_me\\": "tests/src/"
+        }
+    }
+}

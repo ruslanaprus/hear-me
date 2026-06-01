@@ -27,7 +27,7 @@ After clearing caches, the queue worker manager should include `hear_me_tts`.
 If cron runs but no audio is generated, check:
 
 - **Queue Bundles** includes the node bundle machine name.
-- The configured **TTS Audio Field** exists on that node bundle.
+- The configured **TTS Audio Field** exists on that node bundle. Use **Audio field setup** on the HearMe settings form to create it automatically.
 - The active provider can synthesize the node language.
 - Drupal cron is actually running.
 - Watchdog logs for provider failures.

@@ -102,12 +102,13 @@ The module includes the `hear_me_tts` queue worker for cron-based pre-generation
 
 To enable queue generation:
 
-- Add a Media reference field to the target node bundle.
-- Set **TTS Audio Field** to that field's machine name.
+- Set **TTS Audio Field** to the desired field machine name, for example `field_tts_audio`.
+- Open **Audio field setup** and select the content types that should receive this field.
+- Click **Create HearMe audio field**.
 - Add bundle machine names to **Queue Bundles**.
 - Ensure cron runs regularly.
 
-The queue worker creates or reuses generated audio media and attaches it to the configured node field.
+The setup action creates a Media reference field restricted to the HearMe Audio media type. Existing fields are skipped. The queue worker creates or reuses generated audio media and attaches it to the configured node field.
 
 ## Uninstall
 

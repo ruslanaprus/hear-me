@@ -4,10 +4,14 @@ namespace Drupal\hear_me\Form;
 
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Config\TypedConfigManagerInterface;
+use Drupal\Core\Entity\Entity\EntityFormDisplay;
+use Drupal\Core\Entity\Entity\EntityViewDisplay;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Form\ConfigFormBase;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Session\AccountInterface;
+use Drupal\field\Entity\FieldConfig;
+use Drupal\field\Entity\FieldStorageConfig;
 use Drupal\hear_me\Plugin\TtsProvider\TtsProviderConfigurableInterface;
 use Drupal\hear_me\Service\HearMeService;
 use Drupal\hear_me\Service\HearMeInputValidator;
@@ -296,18 +300,17 @@ class HearMeSettingsForm extends ConfigFormBase {
       '#required' => TRUE,
     ];
 
+    $audioFieldName = $config->get('tts_audio_field') ?? 'field_tts_audio';
+
     $form['tts_audio_field'] = [
       '#type'          => 'textfield',
       '#title'         => $this->t('TTS Audio Field'),
       '#description'   => $this->t('Machine name of the node field used to attach generated TTS audio media (e.g. <code>field_tts_audio</code>).'),
-      '#default_value' => $config->get('tts_audio_field') ?? 'field_tts_audio',
+      '#default_value' => $audioFieldName,
       '#required'      => TRUE,
     ];
 
-    $bundleOptions = [];
-    foreach ($this->entityTypeManager->getStorage('node_type')->loadMultiple() as $type) {
-      $bundleOptions[$type->id()] = $type->label();
-    }
+    $bundleOptions = $this->getNodeBundleOptions();
 
     $form['queue_bundles'] = [
       '#type'          => 'checkboxes',
@@ -319,6 +322,32 @@ class HearMeSettingsForm extends ConfigFormBase {
       ),
       '#options'       => $bundleOptions,
       '#default_value' => $config->get('queue_bundles') ?? [],
+    ];
+
+    $form['audio_field_setup'] = [
+      '#type' => 'details',
+      '#title' => $this->t('Audio field setup'),
+      '#open' => FALSE,
+      '#tree' => TRUE,
+      '#description' => $this->t('The queue worker can attach generated HearMe Audio media only when the configured TTS Audio Field exists on the target content type. Use this setup action to create that media reference field automatically.'),
+    ];
+
+    $form['audio_field_setup']['bundles'] = [
+      '#type' => 'checkboxes',
+      '#title' => $this->t('Create the configured audio field on content types'),
+      '#description' => $this->t('Existing fields are skipped. The field references only HearMe Audio media and is shown on the node display by default.'),
+      '#options' => $this->getAudioFieldSetupOptions($audioFieldName, $bundleOptions),
+    ];
+
+    $form['audio_field_setup']['create_audio_field'] = [
+      '#type' => 'submit',
+      '#value' => $this->t('Create HearMe audio field'),
+      '#submit' => ['::createAudioFieldSubmit'],
+      '#validate' => ['::validateAudioFieldSetup'],
+      '#limit_validation_errors' => [
+        ['tts_audio_field'],
+        ['audio_field_setup', 'bundles'],
+      ],
     ];
 
     $form['provider_settings'] = [
@@ -383,6 +412,27 @@ class HearMeSettingsForm extends ConfigFormBase {
         '@max' => HearMeInputValidator::ABSOLUTE_MAX_TEXT_LENGTH,
       ]));
     }
+
+    $this->validateAudioFieldName((string) $form_state->getValue('tts_audio_field'), 'tts_audio_field', $form_state);
+  }
+
+  public function validateAudioFieldSetup(array &$form, FormStateInterface $form_state): void {
+    $this->validateAudioFieldName((string) $form_state->getValue('tts_audio_field'), 'tts_audio_field', $form_state);
+
+    $bundles = array_filter($form_state->getValue(['audio_field_setup', 'bundles']) ?? []);
+    if (!$bundles) {
+      $form_state->setErrorByName('audio_field_setup][bundles', $this->t('Select at least one content type.'));
+    }
+
+    if (!$this->entityTypeManager->getStorage('media_type')->load('hear_me_audio')) {
+      $form_state->setErrorByName('audio_field_setup][bundles', $this->t('The HearMe Audio media type is missing. Reinstall the module or restore the media type before creating node audio fields.'));
+    }
+
+    $fieldName = (string) $form_state->getValue('tts_audio_field');
+    $storage = FieldStorageConfig::loadByName('node', $fieldName);
+    if ($storage && !$this->isCompatibleAudioFieldStorage($storage)) {
+      $form_state->setErrorByName('tts_audio_field', $this->t('The field @field already exists on content and is not a media reference field. Choose a different field machine name.', ['@field' => $fieldName]));
+    }
   }
 
   public function ajaxProviderSettings(array &$form, FormStateInterface $form_state): array {
@@ -436,12 +486,154 @@ class HearMeSettingsForm extends ConfigFormBase {
     $form_state->setRebuild(TRUE);
   }
 
+  public function createAudioFieldSubmit(array &$form, FormStateInterface $form_state): void {
+    $fieldName = (string) $form_state->getValue('tts_audio_field');
+    $bundles = array_values(array_filter($form_state->getValue(['audio_field_setup', 'bundles']) ?? []));
+
+    $this->configFactory->getEditable('hear_me.settings')
+      ->set('tts_audio_field', $fieldName)
+      ->save();
+
+    $created = 0;
+    $skipped = 0;
+    $storage = FieldStorageConfig::loadByName('node', $fieldName);
+    if (!$storage) {
+      $storage = FieldStorageConfig::create([
+        'field_name' => $fieldName,
+        'entity_type' => 'node',
+        'type' => 'entity_reference',
+        'settings' => [
+          'target_type' => 'media',
+        ],
+        'cardinality' => 1,
+        'translatable' => TRUE,
+      ]);
+      $storage->save();
+    }
+
+    foreach ($bundles as $bundle) {
+      if (!$this->entityTypeManager->getStorage('node_type')->load($bundle)) {
+        $skipped++;
+        continue;
+      }
+
+      if (FieldConfig::loadByName('node', $bundle, $fieldName)) {
+        $skipped++;
+        continue;
+      }
+
+      FieldConfig::create([
+        'field_name' => $fieldName,
+        'entity_type' => 'node',
+        'bundle' => $bundle,
+        'label' => 'HearMe audio',
+        'description' => 'Generated text-to-speech audio media attached by HearMe.',
+        'required' => FALSE,
+        'translatable' => TRUE,
+        'settings' => [
+          'handler' => 'default:media',
+          'handler_settings' => [
+            'target_bundles' => [
+              'hear_me_audio' => 'hear_me_audio',
+            ],
+            'auto_create' => FALSE,
+          ],
+        ],
+      ])->save();
+
+      $this->configureAudioFieldDisplays($bundle, $fieldName);
+      $created++;
+    }
+
+    if ($created > 0) {
+      $this->messenger()->addStatus($this->formatPlural(
+        $created,
+        'Created the HearMe audio field on 1 content type.',
+        'Created the HearMe audio field on @count content types.',
+      ));
+    }
+
+    if ($skipped > 0) {
+      $this->messenger()->addWarning($this->formatPlural(
+        $skipped,
+        'Skipped 1 content type because the field already exists or the content type no longer exists.',
+        'Skipped @count content types because the field already exists or the content type no longer exists.',
+      ));
+    }
+
+    $form_state->setRebuild(TRUE);
+  }
+
   protected function anonymousCanUseTts(): bool {
     $anonymousRole = $this->entityTypeManager
       ->getStorage('user_role')
       ->load(AccountInterface::ANONYMOUS_ROLE);
 
     return $anonymousRole && $anonymousRole->hasPermission('use tts playback');
+  }
+
+  protected function getNodeBundleOptions(): array {
+    $options = [];
+    foreach ($this->entityTypeManager->getStorage('node_type')->loadMultiple() as $type) {
+      $options[$type->id()] = $type->label();
+    }
+
+    return $options;
+  }
+
+  protected function getAudioFieldSetupOptions(string $fieldName, array $bundleOptions): array {
+    $options = [];
+    foreach ($bundleOptions as $bundle => $label) {
+      $options[$bundle] = FieldConfig::loadByName('node', $bundle, $fieldName)
+        ? $this->t('@label (field already exists)', ['@label' => $label])
+        : $label;
+    }
+
+    return $options;
+  }
+
+  protected function validateAudioFieldName(string $fieldName, string $formElementName, FormStateInterface $form_state): void {
+    if (!preg_match('/^field_[a-z0-9_]+$/', $fieldName)) {
+      $form_state->setErrorByName($formElementName, $this->t('The TTS Audio Field must start with "field_" and contain only lowercase letters, numbers, and underscores.'));
+      return;
+    }
+
+    if (strlen($fieldName) > FieldStorageConfig::NAME_MAX_LENGTH) {
+      $form_state->setErrorByName($formElementName, $this->t('The TTS Audio Field machine name must be @max characters or fewer.', ['@max' => FieldStorageConfig::NAME_MAX_LENGTH]));
+    }
+  }
+
+  protected function isCompatibleAudioFieldStorage(FieldStorageConfig $storage): bool {
+    return $storage->getType() === 'entity_reference'
+      && ($storage->getSetting('target_type') === 'media');
+  }
+
+  protected function configureAudioFieldDisplays(string $bundle, string $fieldName): void {
+    $formDisplay = EntityFormDisplay::load('node.' . $bundle . '.default')
+      ?: EntityFormDisplay::create([
+        'targetEntityType' => 'node',
+        'bundle' => $bundle,
+        'mode' => 'default',
+        'status' => TRUE,
+      ]);
+    $formDisplay->removeComponent($fieldName)->save();
+
+    $viewDisplay = EntityViewDisplay::load('node.' . $bundle . '.default')
+      ?: EntityViewDisplay::create([
+        'targetEntityType' => 'node',
+        'bundle' => $bundle,
+        'mode' => 'default',
+        'status' => TRUE,
+      ]);
+    $viewDisplay->setComponent($fieldName, [
+      'type' => 'entity_reference_entity_view',
+      'label' => 'above',
+      'settings' => [
+        'view_mode' => 'default',
+        'link' => FALSE,
+      ],
+      'weight' => 90,
+    ])->save();
   }
 
   protected function buildWarning($message): array {

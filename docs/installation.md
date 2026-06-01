@@ -120,13 +120,13 @@ The setup action creates a Media reference field restricted to the HearMe Audio 
 
 Before uninstalling, remove dependencies that Drupal reports on the uninstall page. For example, if the HearMe text filter is enabled on a text format, disable it first.
 
-On uninstall, HearMe removes:
+On uninstall, HearMe removes its own generated runtime data and config:
 
-- Runtime cache rows from `hear_me_audio_cache`.
-- Generated audio files under `private://hear_me/tts/` and `public://tts/`.
-- Managed File entities for generated HearMe audio.
-- Generated `hear_me_audio` media entities.
+- The `hear_me_audio_cache` schema table through Drupal's uninstall process.
+- Tracked generated audio files under `private://hear_me/tts/` and `public://tts/`.
+- Unused managed File entities for generated HearMe audio.
+- Generated `hear_me_audio` media entities whose audio file is under a HearMe-owned audio directory.
 - Module-owned media type and field config.
 - Module-owned simple config.
 
-Editor-uploaded files outside HearMe-owned audio directories are skipped.
+Editor-uploaded files outside HearMe-owned audio directories and files still used elsewhere are skipped.

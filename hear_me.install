@@ -2,6 +2,7 @@
 
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\File\FileSystemInterface;
+use Drupal\file\FileUsage\FileUsageInterface;
 use Drupal\hear_me\Service\TtsCacheManager;
 use Drupal\hear_me\Service\TtsFileHelperInterface;
 use Psr\Log\LoggerInterface;
@@ -32,12 +33,13 @@ function hear_me_install(): void {
 function hear_me_uninstall(): void {
   $entityTypeManager = \Drupal::entityTypeManager();
   $fileSystem = \Drupal::service('file_system');
+  $fileUsage = \Drupal::service('file.usage');
   $configFactory = \Drupal::configFactory();
   $database = \Drupal::database();
   $logger = \Drupal::logger('hear_me');
 
   $fileIds = [];
-  $cacheRows = [];
+  $cacheUris = [];
   if ($database->schema()->tableExists('hear_me_audio_cache')) {
     $cacheRows = $database->select('hear_me_audio_cache', 'c')
       ->fields('c')
@@ -45,27 +47,26 @@ function hear_me_uninstall(): void {
       ->fetchAll();
 
     foreach ($cacheRows as $row) {
-      if (!empty($row->fid)) {
+      $uri = (string) ($row->uri ?? '');
+      if (_hear_me_is_audio_uri($uri)) {
+        $cacheUris[$uri] = $uri;
+      }
+      if (!empty($row->fid) && _hear_me_is_audio_uri($uri)) {
         $fileIds[(int) $row->fid] = (int) $row->fid;
       }
     }
   }
 
-  $fileIds += _hear_me_collect_media_file_ids($entityTypeManager, $logger);
+  $fileIds += _hear_me_delete_generated_media_entities($entityTypeManager, $logger, $fileIds);
   $fileIds += _hear_me_collect_managed_audio_file_ids($entityTypeManager, $logger);
 
-  _hear_me_delete_media_for_file_ids($entityTypeManager, $fileIds, $logger);
-  _hear_me_delete_file_entities($entityTypeManager, $fileIds, $logger);
-  _hear_me_delete_cache_row_files($cacheRows, $fileSystem, $logger);
+  _hear_me_delete_file_entities($entityTypeManager, $fileUsage, $fileIds, $logger);
+  _hear_me_delete_cache_row_files($cacheUris, $entityTypeManager, $fileUsage, $fileSystem, $logger);
 
   foreach (_hear_me_audio_directory_uris() as $dir) {
-    _hear_me_delete_directory($fileSystem, $dir, $logger);
+    _hear_me_delete_empty_directory($fileSystem, $dir, $logger);
   }
   _hear_me_delete_empty_directory($fileSystem, 'private://hear_me', $logger);
-
-  if ($database->schema()->tableExists('hear_me_audio_cache')) {
-    $database->delete('hear_me_audio_cache')->execute();
-  }
 
   $configEntityDeletions = [
     ['storage' => 'field_config', 'id' => 'media.hear_me_audio.field_hear_me_audio_file'],
@@ -100,6 +101,8 @@ function hear_me_uninstall(): void {
       $logger->info('HearMe uninstall: deleted config @name.', ['@name' => $configName]);
     }
   }
+
+  \Drupal::state()->delete('hear_me.provider_connection_test');
 }
 
 /**
@@ -281,13 +284,17 @@ function _hear_me_audio_directory_uris(): array {
 }
 
 /**
- * Collects file IDs from HearMe audio media entities before deleting them.
+ * Deletes generated HearMe audio media and returns their file IDs.
+ *
+ * @param int[] $generatedFileIds
+ *   File IDs already confirmed from HearMe cache metadata.
  */
-function _hear_me_collect_media_file_ids(EntityTypeManagerInterface $entityTypeManager, LoggerInterface $logger): array {
+function _hear_me_delete_generated_media_entities(EntityTypeManagerInterface $entityTypeManager, LoggerInterface $logger, array $generatedFileIds = []): array {
   $fileIds = [];
 
   try {
     $mediaStorage = $entityTypeManager->getStorage('media');
+    $fileStorage = $entityTypeManager->getStorage('file');
     $mediaIds = $mediaStorage->getQuery()
       ->condition('bundle', 'hear_me_audio')
       ->accessCheck(FALSE)
@@ -298,15 +305,27 @@ function _hear_me_collect_media_file_ids(EntityTypeManagerInterface $entityTypeM
     }
 
     $mediaEntities = $mediaStorage->loadMultiple($mediaIds);
+    $generatedMedia = [];
     foreach ($mediaEntities as $media) {
-      if ($media->hasField('field_hear_me_audio_file') && !$media->get('field_hear_me_audio_file')->isEmpty()) {
-        $fid = (int) $media->get('field_hear_me_audio_file')->target_id;
+      if (!$media->hasField('field_hear_me_audio_file') || $media->get('field_hear_me_audio_file')->isEmpty()) {
+        continue;
+      }
+
+      $fid = (int) $media->get('field_hear_me_audio_file')->target_id;
+      $file = $fileStorage->load($fid);
+      $isGenerated = $file
+        ? _hear_me_is_audio_uri((string) $file->getFileUri())
+        : isset($generatedFileIds[$fid]);
+      if ($isGenerated) {
+        $generatedMedia[$media->id()] = $media;
         $fileIds[$fid] = $fid;
       }
     }
 
-    $mediaStorage->delete($mediaEntities);
-    $logger->info('HearMe uninstall: deleted @count generated audio media item(s).', ['@count' => count($mediaEntities)]);
+    if ($generatedMedia) {
+      $mediaStorage->delete($generatedMedia);
+      $logger->info('HearMe uninstall: deleted @count generated audio media item(s).', ['@count' => count($generatedMedia)]);
+    }
   }
   catch (\Exception $e) {
     $logger->warning('HearMe uninstall: could not delete generated audio media: @msg', ['@msg' => $e->getMessage()]);
@@ -342,33 +361,9 @@ function _hear_me_collect_managed_audio_file_ids(EntityTypeManagerInterface $ent
 }
 
 /**
- * Deletes media entities that reference known generated audio files.
+ * Deletes managed File entities for generated audio when they are unused.
  */
-function _hear_me_delete_media_for_file_ids(EntityTypeManagerInterface $entityTypeManager, array $fileIds, LoggerInterface $logger): void {
-  if (!$fileIds) {
-    return;
-  }
-
-  try {
-    $mediaStorage = $entityTypeManager->getStorage('media');
-    $mediaEntities = $mediaStorage->loadByProperties([
-      'field_hear_me_audio_file' => array_values($fileIds),
-    ]);
-
-    if ($mediaEntities) {
-      $mediaStorage->delete($mediaEntities);
-      $logger->info('HearMe uninstall: deleted @count audio media reference(s).', ['@count' => count($mediaEntities)]);
-    }
-  }
-  catch (\Exception $e) {
-    $logger->warning('HearMe uninstall: could not delete audio media references: @msg', ['@msg' => $e->getMessage()]);
-  }
-}
-
-/**
- * Deletes managed File entities for generated audio.
- */
-function _hear_me_delete_file_entities(EntityTypeManagerInterface $entityTypeManager, array $fileIds, LoggerInterface $logger): void {
+function _hear_me_delete_file_entities(EntityTypeManagerInterface $entityTypeManager, FileUsageInterface $fileUsage, array $fileIds, LoggerInterface $logger): void {
   if (!$fileIds) {
     return;
   }
@@ -379,6 +374,12 @@ function _hear_me_delete_file_entities(EntityTypeManagerInterface $entityTypeMan
       $fid = $file->id();
       if (!_hear_me_is_audio_uri((string) $file->getFileUri())) {
         $logger->warning('HearMe uninstall: skipped file entity @fid because @uri is outside managed audio directories.', ['@fid' => $fid, '@uri' => $file->getFileUri()]);
+        continue;
+      }
+
+      $usage = $fileUsage->listUsage($file);
+      if (!empty($usage)) {
+        $logger->warning('HearMe uninstall: skipped file entity @fid because it is still used elsewhere.', ['@fid' => $fid]);
         continue;
       }
 
@@ -394,14 +395,24 @@ function _hear_me_delete_file_entities(EntityTypeManagerInterface $entityTypeMan
 /**
  * Deletes cache row files that may not have managed File entities.
  */
-function _hear_me_delete_cache_row_files(array $rows, FileSystemInterface $fileSystem, LoggerInterface $logger): void {
-  foreach ($rows as $row) {
-    $uri = (string) ($row->uri ?? '');
-    if (!_hear_me_is_audio_uri($uri)) {
-      continue;
-    }
+function _hear_me_delete_cache_row_files(array $uris, EntityTypeManagerInterface $entityTypeManager, FileUsageInterface $fileUsage, FileSystemInterface $fileSystem, LoggerInterface $logger): void {
+  $fileStorage = $entityTypeManager->getStorage('file');
 
+  foreach ($uris as $uri) {
     try {
+      $fileIds = $fileStorage->getQuery()
+        ->condition('uri', $uri)
+        ->accessCheck(FALSE)
+        ->range(0, 1)
+        ->execute();
+      if ($fileIds) {
+        $file = $fileStorage->load(reset($fileIds));
+        if ($file && !empty($fileUsage->listUsage($file))) {
+          $logger->warning('HearMe uninstall: skipped cache file @uri because its File entity is still used elsewhere.', ['@uri' => $uri]);
+        }
+        continue;
+      }
+
       $realpath = $fileSystem->realpath($uri);
       if ($realpath && is_file($realpath)) {
         $fileSystem->delete($uri);
@@ -410,22 +421,6 @@ function _hear_me_delete_cache_row_files(array $rows, FileSystemInterface $fileS
     catch (\Exception $e) {
       $logger->warning('HearMe uninstall: could not delete cache file @uri: @msg', ['@uri' => $uri, '@msg' => $e->getMessage()]);
     }
-  }
-}
-
-/**
- * Deletes a module-owned generated audio directory.
- */
-function _hear_me_delete_directory(FileSystemInterface $fileSystem, string $uri, LoggerInterface $logger): void {
-  try {
-    $realpath = $fileSystem->realpath($uri);
-    if ($realpath && is_dir($realpath)) {
-      $fileSystem->deleteRecursive($uri);
-      $logger->info('HearMe uninstall: deleted generated audio directory @uri.', ['@uri' => $uri]);
-    }
-  }
-  catch (\Exception $e) {
-    $logger->warning('HearMe uninstall: could not delete generated audio directory @uri: @msg', ['@uri' => $uri, '@msg' => $e->getMessage()]);
   }
 }
 

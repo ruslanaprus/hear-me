@@ -125,9 +125,9 @@ Disable the filter or remove dependent config through the UI, then retry uninsta
 
 Use **Clear generated runtime audio cache** on the HearMe settings form to clear tracked runtime playback files.
 
-On uninstall, HearMe removes generated audio under:
+On uninstall, HearMe removes tracked generated audio under:
 
 - `private://hear_me/tts/`
 - `public://tts/`
 
-It skips managed File entities outside those module-owned directories.
+It skips managed File entities outside those module-owned directories and files still used elsewhere.

@@ -1,3 +1,8 @@
+administer hear me:
+  title: 'Administer HearMe'
+  description: 'Configure HearMe text-to-speech providers, caching, rate limits, queue settings, and setup checks.'
+  restrict access: true
+
 use tts playback:
   title: 'Use TTS playback'
   description: 'Allows the user to trigger text-to-speech synthesis. This grants access to a resource-consuming endpoint; grant Anonymous access only with strict rate limits and cache privacy settings.'

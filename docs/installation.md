@@ -73,6 +73,8 @@ Grant **Use TTS playback** to roles that should be able to trigger synthesis.
 
 This permission is restricted because each request can call an external TTS service and consume CPU, memory, network, and disk cache resources. Grant it to Anonymous users only after rate limits, quotas, and cache privacy are reviewed.
 
+Grant **Administer HearMe** to trusted site builders who should manage HearMe provider settings, caching, quotas, queue setup, and setup status checks without receiving the broad **Administer site configuration** permission.
+
 ## Enable Inline Playback
 
 Go to **Administration > Configuration > Content authoring > Text formats and editors**.

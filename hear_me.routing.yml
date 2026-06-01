@@ -14,4 +14,4 @@ hear_me.settings:
     _form:  '\Drupal\hear_me\Form\HearMeSettingsForm'
     _title: 'HearMe TTS Settings'
   requirements:
-    _permission: 'administer site configuration'
+    _permission: 'administer hear me'

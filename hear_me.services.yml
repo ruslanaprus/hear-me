@@ -31,6 +31,20 @@ services:
       - '@current_user'
       - '@request_stack'
 
+  # Installation and runtime readiness checks for the admin settings form
+  hear_me.setup_status:
+    class: Drupal\hear_me\Service\HearMeSetupStatus
+    arguments:
+      - '@config.factory'
+      - '@entity_type.manager'
+      - '@file_system'
+      - '@stream_wrapper_manager'
+      - '@plugin.manager.queue_worker'
+      - '@state'
+      - '@date.formatter'
+      - '@datetime.time'
+      - '@hear_me.service'
+
   # Central orchestrator service
   hear_me.service:
     class: Drupal\hear_me\Service\HearMeService

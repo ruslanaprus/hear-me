@@ -1,5 +1,7 @@
 # Troubleshooting
 
+Start with **Setup status** at **Administration > Configuration > Media > HearMe TTS**. It surfaces the most common install and runtime blockers, including missing provider services, failed provider connection tests, queue worker discovery, media type removal, missing queued audio fields, file storage problems, stale cron, and anonymous access risk.
+
 ## The HearMe Block Does Not Appear In Block Layout
 
 Clear Drupal caches after installing or moving module plugin classes.

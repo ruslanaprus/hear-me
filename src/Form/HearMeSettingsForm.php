@@ -15,6 +15,7 @@ use Drupal\field\Entity\FieldStorageConfig;
 use Drupal\hear_me\Plugin\TtsProvider\TtsProviderConfigurableInterface;
 use Drupal\hear_me\Service\HearMeService;
 use Drupal\hear_me\Service\HearMeInputValidator;
+use Drupal\hear_me\Service\HearMeSetupStatus;
 use Drupal\hear_me\Service\TtsCacheManager;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
@@ -31,17 +32,21 @@ class HearMeSettingsForm extends ConfigFormBase {
 
   protected TtsCacheManager $cacheManager;
 
+  protected HearMeSetupStatus $setupStatus;
+
   public function __construct(
     ConfigFactoryInterface $configFactory,
     TypedConfigManagerInterface $typedConfigManager,
     HearMeService $ttsService,
     EntityTypeManagerInterface $entityTypeManager,
     TtsCacheManager $cacheManager,
+    HearMeSetupStatus $setupStatus,
   ) {
     parent::__construct($configFactory, $typedConfigManager);
     $this->ttsService        = $ttsService;
     $this->entityTypeManager = $entityTypeManager;
     $this->cacheManager      = $cacheManager;
+    $this->setupStatus       = $setupStatus;
   }
 
   public static function create(ContainerInterface $container): static {
@@ -51,6 +56,7 @@ class HearMeSettingsForm extends ConfigFormBase {
       $container->get('hear_me.service'),
       $container->get('entity_type.manager'),
       $container->get('hear_me.cache_manager'),
+      $container->get('hear_me.setup_status'),
     );
   }
 
@@ -82,6 +88,8 @@ class HearMeSettingsForm extends ConfigFormBase {
     if (!in_array($runtimeCacheScheme, ['private', 'public'], TRUE)) {
       $runtimeCacheScheme = 'private';
     }
+
+    $form['setup_status'] = $this->buildSetupStatusPanel();
 
     $form['provider'] = [
       '#type'          => 'select',
@@ -486,6 +494,18 @@ class HearMeSettingsForm extends ConfigFormBase {
     $form_state->setRebuild(TRUE);
   }
 
+  public function testProviderConnectionSubmit(array &$form, FormStateInterface $form_state): void {
+    $result = $this->setupStatus->testProviderConnection();
+    if (($result['status'] ?? '') === 'ok') {
+      $this->messenger()->addStatus($this->t('Provider connection test passed: @message', ['@message' => $result['message'] ?? '']));
+    }
+    else {
+      $this->messenger()->addError($this->t('Provider connection test failed: @message', ['@message' => $result['message'] ?? '']));
+    }
+
+    $form_state->setRebuild(TRUE);
+  }
+
   public function createAudioFieldSubmit(array &$form, FormStateInterface $form_state): void {
     $fieldName = (string) $form_state->getValue('tts_audio_field');
     $bundles = array_values(array_filter($form_state->getValue(['audio_field_setup', 'bundles']) ?? []));
@@ -579,6 +599,47 @@ class HearMeSettingsForm extends ConfigFormBase {
     }
 
     return $options;
+  }
+
+  protected function buildSetupStatusPanel(): array {
+    $rows = [];
+    foreach ($this->setupStatus->getStatusItems() as $item) {
+      $rows[] = [
+        'data' => [
+          $item['label'],
+          [
+            'data' => $item['status'],
+            'class' => ['hear-me-setup-status__status', 'hear-me-setup-status__status--' . $item['state']],
+          ],
+          $item['message'],
+        ],
+        'class' => ['hear-me-setup-status__row', 'hear-me-setup-status__row--' . $item['state']],
+      ];
+    }
+
+    return [
+      '#type' => 'details',
+      '#title' => $this->t('Setup status'),
+      '#open' => TRUE,
+      '#weight' => -100,
+      '#description' => $this->t('Checks the pieces HearMe needs for runtime playback and queue-based audio generation. Provider connection is tested only when you click the button below.'),
+      'items' => [
+        '#type' => 'table',
+        '#header' => [
+          $this->t('Check'),
+          $this->t('Status'),
+          $this->t('Details'),
+        ],
+        '#rows' => $rows,
+        '#attributes' => ['class' => ['hear-me-setup-status']],
+      ],
+      'test_provider_connection' => [
+        '#type' => 'submit',
+        '#value' => $this->t('Test provider connection'),
+        '#submit' => ['::testProviderConnectionSubmit'],
+        '#limit_validation_errors' => [],
+      ],
+    ];
   }
 
   protected function getAudioFieldSetupOptions(string $fieldName, array $bundleOptions): array {

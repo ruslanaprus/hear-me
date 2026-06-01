@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Flood API rate limits and daily/monthly quotas for synthesis requests.
 - Queue worker `hear_me_tts` for cron-based entity audio pre-generation.
 - Settings form action to create the generated audio media reference field on selected content types.
+- Setup status panel for provider, queue worker, media type, audio field, file storage, cron, and anonymous permission checks.
 - Admin settings form for provider, cache, rate limit, queue, and request size configuration.
 
 ### Changed

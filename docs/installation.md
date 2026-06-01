@@ -56,6 +56,10 @@ Use an absolute path or a path that is correct for your hosting environment.
 
 Go to **Administration > Configuration > Media > HearMe TTS**.
 
+Review **Setup status** at the top of the form. It checks provider registration, the last provider connection test, queue worker discovery, the HearMe Audio media type, queued content type audio fields, writable generated audio storage, private files, cron, and anonymous playback permission.
+
+Use **Test provider connection** after saving provider settings to verify Drupal can reach the active TTS backend from the server.
+
 Recommended first-pass settings:
 
 - Keep **Active TTS Provider** set to `piper` unless another provider module is installed.

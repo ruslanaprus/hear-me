@@ -104,7 +104,7 @@ Place **HearMe TTS Block** in a theme region. After saving, content pages should
 
 ## Queue-Based Pre-Generation
 
-The module includes the `hear_me_tts` queue worker for cron-based pre-generation. No bundles are queued by default.
+The module includes a Drupal queue worker (`hear_me_tts`) that processes synthesis jobs during cron. No content bundles are enrolled by default — enrolment is opt-in via the **Queue Bundles** setting.
 
 To enable queue generation:
 
@@ -115,6 +115,10 @@ To enable queue generation:
 - Ensure cron runs regularly.
 
 The setup action creates a Media reference field restricted to the HearMe Audio media type. Existing fields are skipped. The queue worker creates or reuses generated audio media and attaches it to the configured node field.
+
+When a new node is created and its bundle is listed in **Queue Bundles**, a job is pushed onto the queue containing the node title, body text, and language. During the next cron run the worker calls the active provider and attaches the resulting Media entity to the field named in **TTS Audio Field** on the node.
+
+This keeps heavy synthesis work out of the request cycle. The queue can be processed by any Drupal-compatible queue backend: the default database queue, or a contributed module such as those backed by Redis, RabbitMQ, Amazon SQS, or any other broker.
 
 ## Uninstall
 

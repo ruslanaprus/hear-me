@@ -66,8 +66,8 @@ Go to **Administration > Configuration > Media > HearMe TTS**.
 Piper settings:
 
 - **Piper Endpoint URL**: absolute URL to the `/tts` endpoint.
-- **Supported Language Codes**: comma-separated language codes that match installed voices, for example `en, uk`.
-- **Default Language**: fallback language used when the page language cannot be matched.
+- **Supported Language Codes**: comma-separated list of language codes the service can handle, for example, `en, uk`. Must match the voice models installed on the Piper service.
+- **Default Language**: fallback language used when tno language can be resolved from the page context.
 
 The endpoint URL must not contain usernames or passwords. If authentication is required, put Piper behind an internal proxy and implement authentication there, or create a custom provider that sends the required headers securely.
 

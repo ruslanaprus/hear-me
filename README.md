@@ -1,6 +1,6 @@
 # HearMe
 
-A Drupal 11 accessibility module that adds text-to-speech (TTS) playback to content pages. Clicking a speaker button synthesises the text and plays it back through an `<audio>` element — no page reload required.
+HearMe is a Drupal 11 accessibility module that adds text-to-speech (TTS) playback controls to content pages. It provides inline speaker buttons for marked text, a floating "Listen to this page" block, selected text playback, section selection playback, runtime audio caching. Clicking a speaker button synthesises the text and plays it back through an `<audio>` element — no page reload required.
 
 The module is built around an **open provider system**: any HTTP-based TTS service, cloud API, or custom backend can be plugged in by implementing a single PHP interface. Piper is included as the default provider, but it is not a requirement.
 
@@ -8,11 +8,11 @@ The module is built around an **open provider system**: any HTTP-based TTS servi
 
 ## How it works
 
-1. A speaker button (🔊) appears next to marked text (inline) or as a standalone block on the page.
+1. A speaker button (🔊) appears next to marked with `<tts>...</tts>` text (inline) or as a floating HearMe block for whole-page playback. Block has a "Select section to listen" mode with mouse and keyboard support.
 2. Clicking the button POSTs the text and language code to `/hear-me/tts`.
 3. Drupal forwards the request to whichever TTS provider is currently active.
 4. The synthesised audio is returned and played through an `<audio>` element on the page.
-5. Runtime audio files are cached on disk with TTL, file-count, and total-size limits. Identical source/text/language/provider/config combinations can be served from cache without calling the backend again.
+5. Runtime audio files are cached in private storage by default.
 
 ```
 Browser
@@ -35,16 +35,102 @@ audio bytes  ──►  saved as File + cache metadata  ──►  returned to b
 
 ## Requirements
 
-### Drupal core modules
-
-| Module | Source | Notes |
-|---|---|---|
-| `media` | Drupal core | Stores queue-generated/pre-generated audio as Media entities |
-| `file` | Drupal core | Manages runtime cache and pre-generated audio files |
-| `language` *(optional)* | Drupal core | Required for per-node language detection |
-| `content_translation` *(optional)* | Drupal core | Required to assign a language to individual nodes |
+- Drupal 11.
+- PHP 8.3 or later.
+- Drupal core `file` module: Manages runtime cache and pre-generated audio files.
+- Drupal core `media` module: Stores queue-generated/pre-generated audio as Media entities.
+- Drupal core `language` module (optional): Required for per-node language detection.
+- Drupal core `content_translation` (optional): Required to assign a language to individual nodes |
+- A reachable TTS backend. Piper is supported.
 
 Enable the optional modules only if your site has multilingual content. Without them all nodes default to the site language.
+
+Private files are recommended because runtime playback can include selected text or authenticated page content.
+
+## Installation
+
+After the project is available on Drupal.org:
+
+```bash
+composer require drupal/hear_me
+drush en hear_me -y
+drush cr
+```
+
+If Drush is not available, enable the module from **Administration > Extend** and clear caches from **Administration > Configuration > Development > Performance**.
+
+See [docs/installation.md](docs/installation.md) for full installation and setup steps.
+
+## Adding TTS to content
+
+There are two ways to surface the speaker button on a page. They can be used independently or together:
+
+### Option 1 — Inline text filter
+
+Enable **TTS Playback Button** on a text format, allow the `<tts>` tag:
+
+**Administration → Configuration → Content authoring → Text formats and editors**
+
+Then add markup like this to content:
+
+```html
+<tts>Being a cat isn’t just about whiskers and naps—it’s a philosophy, a lifestyle, and a subtle art form</tts>
+```
+
+The language is taken from the node's content language. To enable per-node language detection, see [Language handling](#language-handling).
+
+### Option 2 — "Listen to this page" block
+
+
+Place the **HearMe TTS Block** via **Administration → Structure → Block layout**.
+
+The block renders a 🔊 **Listen to this page** button that can be placed in any region. The block can read the page, read selected browser text, or let the user choose a section with **Select section to listen**. When clicked, it:
+
+1. Uses the currently highlighted text first, if the user has selected any text on the page.
+2. Otherwise reads the page in a content-first mode (article/main text), excluding comments, menu, and sidebar by default.
+3. Lets users opt in to **Include comments**, **Include sidebar**, and **Include menu** via checkboxes under the block.
+4. Sends the cleaned text to `/hear-me/tts` and plays the returned audio through an `<audio controls>` element.
+
+The block also renders a **Select section to listen** control:
+
+- Turns on an inspect mode where users can hover and click a specific section to read aloud.
+- Works with keyboard navigation too (`Arrow keys` to move, `Enter` to select, `Esc` to cancel).
+- Limits default selectable targets to content-first areas, with comments/sidebar/menu available only when their opt-in checkboxes are enabled.
+
+The block is language-aware: it resolves the current interface language against the provider's supported language codes before sending the request.
+
+## Configuration
+
+Settings are available at:
+
+```text
+/admin/config/media/hear-me
+```
+
+Important settings include:
+
+- Setup status checks for provider, queue worker, media type, audio field, file storage, cron, and anonymous access.
+- Active provider.
+- Runtime cache storage and retention.
+- Rate limits and quotas.
+- Max request size and max text length.
+- Queue bundles and audio attachment field.
+- Audio field setup for selected content types.
+- Provider-specific settings such as Piper endpoint and languages.
+
+## Documentation
+
+- [Installation](docs/installation.md)
+- [Piper provider](docs/piper.md)
+- [Provider development](docs/providers.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Changelog](CHANGELOG.md)
+
+## Provider System
+
+Providers are Drupal services tagged with `hear_me.provider`. Custom modules can register additional providers without changing HearMe code.
+
+See [docs/providers.md](docs/providers.md) for interfaces, service tags, and configurable provider guidance.
 
 ### External TTS service
 
@@ -66,273 +152,16 @@ $databases['default']['default'] = [
 
 ---
 
-## Installation
+## Security Notes
 
-1. Place the module in `web/modules/custom/hear_me/`.
-2. Enable it from **Administration → Extend**.
-3. Run database updates from `/update.php` after upgrading from an earlier version.
-4. Clear caches from the Drupal UI if Drush is not available.
+The `/hear-me/tts` endpoint requires the `use tts playback` permission and a valid CSRF request header token.
 
-```bash
-drush en hear_me -y
-drush cr
-```
+Grant **Use TTS playback** to Anonymous users only after reviewing rate limits, quotas, provider capacity, and whether generated runtime audio may contain private or user-selected text.
 
-On first enable, the module creates the `public://tts/` directory and installs the `hear_me_audio` media type along with its file field.
+Grant **Administer HearMe** to trusted site builders who should configure providers, cache storage, rate limits, queue settings, setup checks, and generated audio field setup without receiving the broad **Administer site configuration** permission.
 
----
+## License
 
-## Admin settings
+HearMe is licensed under GPL-2.0-or-later. The legal license text is in [LICENSE.txt](LICENSE.txt).
 
-**Administration → Configuration → Media → HearMe TTS**
-`/admin/config/media/hear-me`
-
-Requires the `administer site configuration` permission.
-
-### Global settings
-
-| Setting | Default | Description |
-|---|---|---|
-| **Active TTS Provider** | `piper` | Which registered provider handles synthesis. Switching providers reloads the provider-specific settings section via AJAX. |
-| **Enable file-based caching** | `true` | When enabled, runtime playback audio can be stored using the configured runtime cache storage. When disabled, click-triggered playback is returned directly and is not persisted. |
-| **Runtime cache file storage** | `private` | Stores runtime playback cache files in private files by default. If private files are not configured, playback still works but generated audio is not persisted. Public storage is available for sites where generated speech files are safe to expose by URL. |
-| **Inline cache TTL** | `2592000` | Seconds to keep audio generated by inline `<tts>` buttons. |
-| **Whole-page cache TTL** | `86400` | Seconds to keep audio generated by the block whole-page action. Keep this short because text is extracted from rendered DOM. |
-| **Selected text cache TTL** | `3600` | Seconds to keep selected text or selected section audio. Keep this short because selections are arbitrary user text. |
-| **Ad-hoc cache TTL** | `0` | Fallback TTL for API requests without a known source. Disabled by default. |
-| **Maximum runtime cache files** | `5000` | Oldest runtime cache entries are purged when this count is exceeded. |
-| **Maximum runtime cache size** | `512` | Maximum tracked runtime cache size in MB. Oldest entries are purged first. |
-| **Rate-limit window** | `60` | Flood API window for short user/IP/role throttles. |
-| **Requests per user/IP/role** | `20` / `60` / `0` | Short-window request limits. Role-set throttling is disabled by default. |
-| **Daily/monthly user quota** | `500` / `5000` | Longer-term Flood API quotas per authenticated user or anonymous IP identity. |
-| **TTS Audio Field** | `field_tts_audio` | The node field used by the queue worker to attach pre-generated audio to nodes. |
-| **Queue Bundles** | *(empty)* | Node bundle machine names that trigger background synthesis when a new node is created. Empty means none. |
-| **Max Request Bytes** | `32768` | Maximum accepted request body size in bytes. |
-| **Max Text Length** | `5000` | Maximum accepted text length in characters. |
-
-### Provider-specific settings
-
-The lower section of the form shows fields specific to the selected provider. These fields change automatically when you switch the **Active TTS Provider** dropdown — no page reload needed. What appears there is entirely up to the provider implementation; it could be an endpoint URL, an API key, a model name, or any other value the provider needs.
-
-The built-in **Piper** provider exposes:
-
-| Setting | Description |
-|---|---|
-| **Piper Endpoint URL** | Full URL of the TTS service, e.g. `http://piper-service:5000/tts`. |
-| **Supported Language Codes** | Comma-separated list of language codes the service can handle, e.g. `en, uk`. Must match the voice models installed on the Piper service. |
-| **Default Language** | Language used when no language can be resolved from the page context. |
-
-### Switching providers
-
-1. Go to **Administration → Configuration → Media → HearMe TTS**.
-2. Change the **Active TTS Provider** dropdown to the desired provider.
-3. Fill in the provider-specific settings that appear below.
-4. Save. The new provider is active immediately for all subsequent synthesis requests.
-
-Only providers that are registered as tagged services in an enabled module appear in the dropdown. See [Provider system](#provider-system) for how to add one.
-
----
-
-## Adding TTS to content
-
-There are two ways to surface the speaker button on a page. They can be used independently or together:
-
-### Option 1 — Inline text filter
-
-Enable the **TTS Playback Button** text filter (`filter_tts_playback`) on a text format:
-
-**Administration → Configuration → Content authoring → Text formats and editors**
-
-Wrap any passage in `<tts>` tags in the body field:
-
-```html
-<tts>This sentence will have a speaker button next to it.</tts>
-```
-
-The filter transforms this into:
-
-```
-[visible text]  🔊  [hidden audio player, shown after first click]
-```
-
-Clicking 🔊 sends the text to `/hear-me/tts` and plays the audio response through the `<audio controls>` element that appears inline. A status message (`aria-live="polite"`) is shown while audio is loading and cleared once playback starts.
-
-The language is taken from the node's content language. To enable per-node language detection, see [Language handling](#language-handling).
-
-### Option 2 — "Listen to this page" block
-
-Place the **HearMe TTS Block** via **Administration → Structure → Block layout**.
-
-The block renders a 🔊 **Listen to this page** button that can be placed in any region. When clicked, it:
-
-1. Uses the currently highlighted text first, if the user has selected any text on the page.
-2. Otherwise reads the page in a content-first mode (article/main text), excluding comments, menu, and sidebar by default.
-3. Lets users opt in to **Include comments**, **Include sidebar**, and **Include menu** via checkboxes under the block.
-4. Sends the cleaned text to `/hear-me/tts` and plays the returned audio through an `<audio controls>` element.
-
-The block also renders a **Select section to listen** control:
-
-- Turns on an inspect mode where users can hover and click a specific section to read aloud.
-- Works with keyboard navigation too (`Arrow keys` to move, `Enter` to select, `Esc` to cancel).
-- Limits default selectable targets to content-first areas, with comments/sidebar/menu available only when their opt-in checkboxes are enabled.
-
-The block is language-aware: it resolves the current interface language against the provider's supported language codes before sending the request.
-
----
-
-## Provider system
-
-Providers are standard Drupal tagged services. The module discovers them automatically via `!tagged_iterator` — there is no central registry to update. Any enabled module can contribute a provider and it will appear in the admin dropdown after a cache clear.
-
-### Interfaces
-
-**`TtsProviderInterface`** — required for all providers:
-
-| Method | Return type | Purpose |
-|---|---|---|
-| `synthesize(string $text, string $lang)` | `?TtsSynthesisResult` | Calls the external service and returns raw audio bytes + format metadata. Returns `null` on failure. |
-| `getSupportedLanguages()` | `array` | Language codes this provider can handle, e.g. `['en', 'uk']`. |
-| `getLabel()` | `string` | Human-readable name shown in the admin dropdown. |
-| `getDefaultMimeType()` | `string` | MIME type for cache lookups, e.g. `audio/wav`. |
-| `getDefaultExtension()` | `string` | File extension without dot, e.g. `wav`. |
-
-**`TtsProviderConfigurableInterface`** — optional, implement this if the provider has admin settings:
-
-| Method | Purpose |
-|---|---|
-| `buildConfigForm(array $form, array $config)` | Adds provider-specific fields to the settings form. |
-| `submitConfigForm(array &$form, FormStateInterface $form_state)` | Saves those fields to config. |
-
-If a provider does not implement `TtsProviderConfigurableInterface`, no provider-specific section is shown in the settings form for that provider.
-
-### Registering a provider
-
-Create a class that implements `TtsProviderInterface`, then register it as a service tagged `hear_me.provider`:
-
-```yaml
-# mymodule/mymodule.services.yml
-
-services:
-  mymodule.provider.mytts:
-    class: Drupal\mymodule\Plugin\TtsProvider\MyTtsProvider
-    arguments:
-      - '@http_client'
-      - '@config.factory'
-    tags:
-      - { name: hear_me.provider, provider_key: mytts }
-```
-
-The `provider_key` tag value is the machine name used in `hear_me.settings` and in cache file URIs. After `drush cr` the provider appears in the **Active TTS Provider** dropdown.
-
-### Provider config namespace
-
-Each provider should store its settings in a config object named `hear_me.provider.<provider_key>`. The settings form and `HearMeService` resolve provider config by that naming convention. For example, the Piper provider uses `hear_me.provider.piper`.
-
-### Example: connecting a cloud API
-
-The module is not tied to self-hosted services. A provider backed by a cloud TTS API (such as Google Cloud TTS, AWS Polly, or ElevenLabs) would look identical from the module's perspective — it just implements the same interface, makes its own HTTP calls inside `synthesize()`, and returns a `TtsSynthesisResult` with the audio bytes.
-
----
-
-## Language handling
-
-The language sent to the provider is resolved in this order:
-
-1. `data-lang` on the `<tts>` button — set from the node's content language by the text filter.
-2. `drupalSettings.hear_me.default_lang` — resolved from the current Drupal interface language at page load, validated against the provider's supported codes.
-3. The provider's configured **Default Language** as the final fallback.
-
-### Enabling per-node language detection
-
-1. Enable the `language` and `content_translation` core modules.
-2. Add languages at **Administration → Configuration → Regional & language → Languages**.
-3. Enable language assignment for your content types at **Administration → Configuration → Regional & language → Content language and translation**.
-4. Set the **Language** field on each node before saving.
-
----
-
-## Cached audio files
-
-Synthesised runtime files are stored under `private://hear_me/tts/` by default. If **Runtime cache file storage** is changed to public, files are stored at `public://tts/<hash>.<ext>` (typically `sites/default/files/tts/`). The hash includes the request source, storage scheme, normalized text hash, language, provider, extension, and provider configuration hash, so provider setting changes do not reuse stale audio.
-
-Runtime playback creates a Drupal `file` entity plus a row in `hear_me_audio_cache`. It does not create a `media` entity. Media entities are reserved for queue-based pre-generation workflows where generated audio is attached to content.
-
-Runtime cache entries are purged by cron when they expire or when the configured file-count/total-size limits are exceeded. The settings form also includes **Clear generated runtime audio cache** for environments without Drush.
-
-To manually clear the runtime audio cache with Drush:
-
-```bash
-drush php-eval "\Drupal::service('hear_me.cache_manager')->clearRuntimeCache();"
-```
-
----
-
-## Asynchronous synthesis (queue)
-
-The module includes a Drupal queue worker (`hear_me_tts`) that processes synthesis jobs during cron. No content bundles are enrolled by default — enrolment is opt-in via the **Queue Bundles** setting.
-
-When a new node is created and its bundle is listed in **Queue Bundles**, a job is pushed onto the queue containing the node title, body text, and language. During the next cron run the worker calls the active provider and attaches the resulting Media entity to the field named in **TTS Audio Field** on the node.
-
-This keeps heavy synthesis work out of the request cycle. The queue can be processed by any Drupal-compatible queue backend: the default database queue, or a contributed module such as those backed by Redis, RabbitMQ, Amazon SQS, or any other broker.
-
-To process the queue manually during development:
-
-```bash
-drush queue:run hear_me_tts
-```
-
-### Queue item payload
-
-```php
-[
-  'nid'  => 42,     // node ID to attach the result to
-  'text' => '...',  // text to synthesise
-  'lang' => 'en',   // language code
-]
-```
-
-Other modules can push items onto the same queue to trigger synthesis from their own context:
-
-```php
-\Drupal::queue('hear_me_tts')->createItem([
-  'nid'  => $node->id(),
-  'text' => $node->body->value,
-  'lang' => $node->language()->getId(),
-]);
-```
-
----
-
-## HTTP endpoint
-
-| Method | Path | Permission | CSRF | Description |
-|---|---|---|---|---|
-| `POST` | `/hear-me/tts` | `use tts playback` | required | Accepts JSON `{ "text": "...", "lang": "en", "source": "inline" }`. Returns audio. |
-| `GET` | `/admin/config/media/hear-me` | `administer site configuration` | — | Admin settings form. |
-
-The TTS endpoint requires a `X-CSRF-Token` header. The JavaScript library fetches this automatically from the `system.csrftoken` route and caches it for the lifetime of the page. The endpoint is also protected by Drupal Flood API throttles and daily/monthly quotas configured on the HearMe settings form.
-
----
-
-## Permissions
-
-| Permission | Description |
-|---|---|
-| `use tts playback` | Required to call `POST /hear-me/tts`. Grant to roles that should be able to trigger synthesis. Be careful granting this to Anonymous users because it exposes a public resource-consumption endpoint, even with rate limits enabled. |
-| `administer site configuration` | Required to access the HearMe settings form. |
-
----
-
-## Uninstallation
-
-```bash
-drush pmu hear_me -y
-```
-
-On uninstall the module removes:
-- All synthesised audio files under `public://tts/`.
-- All `file` and `media` entities that reference those files.
-- The `hear_me_audio` media type and its field definitions.
-- All `hear_me.*` config objects.
-
-Audio files uploaded by editors or created by other modules are not touched.
+In plain terms: you may use, study, modify, and redistribute this module under the GPL. If you distribute modified versions, they must remain GPL-compatible. The module is provided without warranty.

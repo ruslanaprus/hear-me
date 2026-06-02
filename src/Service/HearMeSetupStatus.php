@@ -180,11 +180,21 @@ class HearMeSetupStatus {
   }
 
   protected function getPrivateFilesStatus(): array {
-    if ($this->streamWrapperManager->isValidScheme('private')) {
+    if (!$this->streamWrapperManager->isValidScheme('private')) {
+      return $this->item('private_files', $this->t('Private files configured'), 'warning', $this->t('Not configured'), $this->t('Playback still works, but private runtime cache files cannot persist until file_private_path is configured or public runtime caching is selected.'));
+    }
+
+    $directory = TtsCacheManager::RUNTIME_PRIVATE_URI_BASE;
+    $prepared = $this->fileSystem->prepareDirectory(
+      $directory,
+      FileSystemInterface::CREATE_DIRECTORY | FileSystemInterface::MODIFY_PERMISSIONS,
+    );
+
+    if ($prepared) {
       return $this->item('private_files', $this->t('Private files configured'), 'ok', $this->t('OK'), $this->t('Private runtime cache storage is available.'));
     }
 
-    return $this->item('private_files', $this->t('Private files configured'), 'warning', $this->t('Not configured'), $this->t('Playback still works, but private runtime cache files cannot persist until file_private_path is configured or public runtime caching is selected.'));
+    return $this->item('private_files', $this->t('Private files configured'), 'warning', $this->t('Not writable'), $this->t('Playback still works, but private runtime cache files cannot persist until Drupal can write to private://hear_me/tts or public runtime caching is selected.'));
   }
 
   protected function getCronStatus(): array {

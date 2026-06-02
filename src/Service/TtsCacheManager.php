@@ -139,7 +139,15 @@ class TtsCacheManager {
   }
 
   public function isRuntimeCacheStorageAvailable(): bool {
-    return $this->streamWrapperManager->isValidScheme($this->getRuntimeCacheScheme());
+    if (!$this->streamWrapperManager->isValidScheme($this->getRuntimeCacheScheme())) {
+      return FALSE;
+    }
+
+    $directory = $this->getRuntimeCacheBaseUri();
+    return $this->fileSystem->prepareDirectory(
+      $directory,
+      FileSystemInterface::CREATE_DIRECTORY | FileSystemInterface::MODIFY_PERMISSIONS,
+    );
   }
 
   public function getCachedAudio(string $cid, int $ttl): ?TtsAudioResult {

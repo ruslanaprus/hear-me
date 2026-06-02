@@ -416,14 +416,6 @@
     return true;
   }
 
-  function isRedundantBodyDescendant(element) {
-    if (!element || !(element instanceof Element)) {
-      return false;
-    }
-
-    return !!element.closest('.teaser__content, .node__content, .field--name-body .field__item');
-  }
-
   function collectElementsBySelectors(selectors, controlRoot, scopeOptions, options) {
     const results = [];
     const allowNested = !!options?.allowNested;
@@ -477,10 +469,6 @@
       SECTION_CANDIDATE_DESCENDANT_SELECTORS.forEach(function (selector) {
         root.querySelectorAll(selector).forEach(function (element) {
           if (!isCandidateElement(element, controlRoot, scopeOptions)) {
-            return;
-          }
-
-          if (element.matches('p, li') && isRedundantBodyDescendant(element)) {
             return;
           }
 

@@ -137,11 +137,18 @@ final class ExampleProvider implements TtsProviderInterface {
 
 ## Language handling
 
-The language sent to the provider is resolved in this order:
+The `/hear-me/tts` endpoint validates the requested language against the active provider's supported language codes. It normalises case and underscores, accepts an exact supported code first, then tries the two-letter short code, for example `en-US` to `en`. Unsupported languages return `400 Unsupported language`.
 
-1. `data-lang` on the `<tts>` button — set from the node's content language by the text filter.
-2. `drupalSettings.hear_me.default_lang` — resolved from the current Drupal interface language at page load, validated against the provider's supported codes.
-3. The provider's configured **Default Language** as the final fallback.
+Language values come from these places:
+
+| Flow | Language source |
+|---|---|
+| Inline `<tts>` playback | The text filter writes `data-lang` on the generated button from the filter language code. If the language is missing or unspecified, it uses the provider's configured **Default Language**. |
+| Whole-page, selected text, and selected section playback | The block attaches `drupalSettings.hear_me.default_lang`. It uses the current Drupal interface language short code when the provider supports it, otherwise the provider's configured **Default Language**. |
+| Direct API requests | If `lang` is omitted or empty, the endpoint uses the provider's configured **Default Language**. |
+| Queue-based pre-generation | New node jobs use the node entity language. If it is unspecified, they use the provider's configured **Default Language**. |
+
+Provider modules should return every code they can synthesise from `getSupportedLanguages()`. Configurable providers should store their fallback language in the `default_lang` key of `hear_me.provider.<provider_key>`.
 
 ### Enabling per-node language detection
 
@@ -152,11 +159,30 @@ The language sent to the provider is resolved in this order:
 
 ## Cached audio files
 
-Synthesised runtime files are stored under `private://hear_me/tts/` by default. If **Runtime cache file storage** is changed to public, files are stored at `public://tts/<hash>.<ext>` (typically `sites/default/files/tts/`). The hash includes the request source, storage scheme, normalized text hash, language, provider, extension, and provider configuration hash, so provider setting changes do not reuse stale audio.
+Runtime playback files are stored under `private://hear_me/tts/` by default. If **Runtime cache file storage** is changed to public, runtime files are stored at `public://tts/<hash>.<ext>` (typically `sites/default/files/tts/`). If caching is disabled, the source TTL is `0`, or the selected stream wrapper is unavailable, playback still works but the generated audio is returned directly and is not persisted.
 
-Runtime playback creates a Drupal `file` entity plus a row in `hear_me_audio_cache`. It does not create a `media` entity. Media entities are reserved for queue-based pre-generation workflows where generated audio is attached to content.
+Queue-generated entity audio always uses `public://tts/<hash>.<ext>` because it is attached to content as Media.
+
+| Flow | File entity | Media entity | Cleanup behavior |
+|---|---|---|---|
+| Runtime playback (`inline`, `page`, `selection`, `adhoc`) | Created only when audio is persisted. | No. | Expired entries and entries over runtime file-count/size limits are purged by cron. The settings form can also clear tracked runtime cache entries. |
+| Queue pre-generation (`entity`) | Yes. | Yes, using the `hear_me_audio` media type. | Excluded from runtime cache TTL and size cleanup because it is attached to content. |
+
+HearMe cache IDs include:
+
+| Component | Purpose                                                                                                |
+|---|--------------------------------------------------------------------------------------------------------|
+| Source type | Separates `inline`, `page`, `selection`, `adhoc`, and `entity` requests.                               |
+| Storage key | Separates private and public runtime cache files. Queue-generated `entity` audio always uses `public`. |
+| Text hash | Separates different normalised text payloads without storing text in the cache ID.                     |
+| Language | Separates the same text synthesised in different languages.                                            |
+| Provider key | Separates providers.                                                                                   |
+| Audio extension | Separates output formats such as `wav` and `mp3`.                                                      |
+| Provider configuration hash | Separates audio generated before and after provider settings change.                                   |
 
 Runtime cache entries are purged by cron when they expire or when the configured file-count/total-size limits are exceeded. The settings form also includes **Clear generated runtime audio cache** for environments without Drush.
+
+Provider setting changes create new cache entries instead of reusing stale audio. If a remote model or voice file changes without a Drupal config change, clear the runtime cache from the settings form and regenerate queued media if needed.
 
 To manually clear the runtime audio cache with Drush:
 

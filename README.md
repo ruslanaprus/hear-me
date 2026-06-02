@@ -8,7 +8,7 @@ The module is built around an **open provider system**: any HTTP-based TTS servi
 
 ## How it works
 
-1. A speaker button (🔊) appears next to marked with `<tts>...</tts>` text (inline) or as a floating HearMe block for whole-page playback. Block has a "Select section to listen" mode with mouse and keyboard support.
+1. A speaker button (🔊) appears next to text marked with `<tts>...</tts>` or as a floating HearMe block for whole-page playback. The block has a "Select section to listen" mode with mouse and keyboard support.
 2. Clicking the button POSTs the text and language code to `/hear-me/tts`.
 3. Drupal forwards the request to whichever TTS provider is currently active.
 4. The synthesised audio is returned and played through an `<audio>` element on the page.
@@ -28,7 +28,7 @@ HearMeService  ──── file cache hit? ──► return cached audio ──
 Active TTS Provider  (implements TtsProviderInterface)
   │  HTTP call to external service / API
   ▼
-audio bytes  ──►  saved as File + cache metadata  ──►  returned to browser  ──►  <audio> element
+audio bytes  ──►  optionally saved as File + cache metadata  ──►  returned to browser  ──►  <audio> element
 ```
 
 ---
@@ -40,7 +40,7 @@ audio bytes  ──►  saved as File + cache metadata  ──►  returned to b
 - Drupal core `file` module: Manages runtime cache and pre-generated audio files.
 - Drupal core `media` module: Stores queue-generated/pre-generated audio as Media entities.
 - Drupal core `language` module (optional): Required for per-node language detection.
-- Drupal core `content_translation` (optional): Required to assign a language to individual nodes |
+- Drupal core `content_translation` (optional): Required to assign a language to individual nodes.
 - A reachable TTS backend. Piper is supported.
 
 Enable the optional modules only if your site has multilingual content. Without them all nodes default to the site language.
@@ -77,7 +77,7 @@ Then add markup like this to content:
 <tts>Being a cat isn’t just about whiskers and naps—it’s a philosophy, a lifestyle, and a subtle art form</tts>
 ```
 
-The language is taken from the node's content language. To enable per-node language detection, see [Language handling](#language-handling).
+The language follows the rendered text language and is validated by the TTS endpoint. To enable per-node language detection, see [Language handling](docs/providers.md#language-handling).
 
 ### Option 2 — "Listen to this page" block
 
@@ -101,7 +101,7 @@ The block is language-aware: it resolves the current interface language against 
 
 ## Configuration
 
-Settings are available at:
+Settings are available to users with **Administer HearMe** at:
 
 ```text
 /admin/config/media/hear-me
@@ -117,6 +117,8 @@ Important settings include:
 - Queue bundles and audio attachment field.
 - Audio field setup for selected content types.
 - Provider-specific settings such as Piper endpoint and languages.
+
+See [Global settings](docs/installation.md#global-settings) for the full settings table and defaults.
 
 ## Documentation
 
@@ -154,11 +156,11 @@ $databases['default']['default'] = [
 
 ## Security Notes
 
-The `/hear-me/tts` endpoint requires the `use tts playback` permission and a valid CSRF request header token.
+The `/hear-me/tts` endpoint requires the **Use TTS playback** permission (`use tts playback`) and a valid CSRF request header token.
 
 Grant **Use TTS playback** to Anonymous users only after reviewing rate limits, quotas, provider capacity, and whether generated runtime audio may contain private or user-selected text.
 
-Grant **Administer HearMe** to trusted site builders who should configure providers, cache storage, rate limits, queue settings, setup checks, and generated audio field setup without receiving the broad **Administer site configuration** permission.
+Grant **Administer HearMe** (`administer hear me`) to trusted site builders who should configure providers, cache storage, rate limits, queue settings, setup checks, and generated audio field setup without receiving the broad **Administer site configuration** permission.
 
 ## License
 

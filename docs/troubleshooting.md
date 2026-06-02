@@ -28,7 +28,7 @@ After clearing caches, the queue worker manager should include `hear_me_tts`.
 
 If cron runs but no audio is generated, check:
 
-- **Queue Bundles** includes the node bundle machine name.
+- **Queue TTS pre-generation for content types** includes the node's content type.
 - The configured **TTS Audio Field** exists on that node bundle. Use **Audio field setup** on the HearMe settings form to create it automatically.
 - The active provider can synthesize the node language.
 - Drupal cron is actually running.
@@ -52,6 +52,12 @@ The `/hear-me/tts` endpoint requires:
 - A valid `X-CSRF-Token` request header.
 
 HearMe's JavaScript fetches the token automatically. If calling the endpoint manually, first request `/session/token` and send the returned value as `X-CSRF-Token`.
+
+## Settings Page Returns 403
+
+The settings page requires **Administer HearMe** (`administer hear me`). It does not use the broad **Administer site configuration** permission.
+
+Grant **Administer HearMe** only to trusted site builders because it controls provider endpoints, caching, rate limits, queue setup, and setup actions.
 
 ## Playback Returns 405
 
@@ -131,3 +137,5 @@ On uninstall, HearMe removes tracked generated audio under:
 - `public://tts/`
 
 It skips managed File entities outside those module-owned directories and files still used elsewhere.
+
+Node fields created through **Audio field setup** are not deleted automatically. Remove those fields manually if you no longer need them after uninstall.

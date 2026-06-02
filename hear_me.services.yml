@@ -31,6 +31,15 @@ services:
       - '@current_user'
       - '@request_stack'
 
+  # Node queue payload builder for pre-generated audio
+  hear_me.node_audio_queue:
+    class: Drupal\hear_me\Service\HearMeNodeAudioQueue
+    arguments:
+      - '@config.factory'
+      - '@entity_type.manager'
+      - '@queue'
+      - '@logger.factory'
+
   # Installation and runtime readiness checks for the admin settings form
   hear_me.setup_status:
     class: Drupal\hear_me\Service\HearMeSetupStatus

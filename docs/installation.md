@@ -84,7 +84,7 @@ Recommended first-pass settings:
 | **Requests per user/IP/role set per window** | `20` / `60` / `0` | Short-window request limits. Role-set throttling is disabled by default. Set a limit to `0` to disable that throttle. |
 | **Daily/monthly requests per user** | `500` / `5000` | Longer-term Flood API quotas per authenticated user or anonymous IP identity. Set a quota to `0` to disable it. |
 | **TTS Audio Field** | `field_tts_audio` | Node field used by the queue worker to attach pre-generated audio media to nodes. |
-| **Queue TTS pre-generation for content types** | *(none)* | Content types whose new nodes should be queued for background synthesis. The saved config stores bundle machine names. Empty means none. |
+| **Queue TTS pre-generation for content types** | *(none)* | Content types whose new nodes and title/body/language updates should be queued for background synthesis. The saved config stores bundle machine names. Empty means none. |
 | **Maximum TTS request body size** | `32768` | Maximum JSON request body size accepted by `/hear-me/tts`, in bytes. Values are bounded between `1024` and `262144`. |
 | **Maximum TTS text length** | `5000` | Maximum normalized text length accepted by `/hear-me/tts`, in characters. Values are between `1` and `20000`. |
 
@@ -148,7 +148,9 @@ To enable queue generation:
 
 The setup action creates a Media reference field restricted to the HearMe Audio media type. Existing fields are skipped. The queue worker creates or reuses generated audio media and attaches it to the configured node field.
 
-When a new node is created and its content type is selected in **Queue TTS pre-generation for content types**, a job is pushed onto the queue containing the node title, body text, and language. During the next cron run the worker calls the active provider and attaches the resulting Media entity to the field named in **TTS Audio Field** on the node.
+When a node is created, or when its title, body, or language changes, and its content type is selected in **Queue TTS pre-generation for content types**, a job is pushed onto the queue containing the node title, body text, language, and a content hash. During the next cron run the worker reloads the current node, skips stale jobs whose hash no longer matches, calls the active provider, and attaches the resulting Media entity to the field named in **TTS Audio Field** on the node.
+
+The existing attached audio remains visible until the replacement job succeeds. This keeps enrolled nodes consistent while avoiding old queue jobs overwriting newer audio.
 
 This keeps heavy synthesis work out of the request cycle. The queue can be processed by any Drupal-compatible queue backend: the default database queue, or a contributed module such as those backed by Redis, RabbitMQ, Amazon SQS, or any other broker.
 

@@ -32,6 +32,7 @@ If cron runs but no audio is generated, check:
 - The configured **TTS Audio Field** exists on that node bundle. Use **Audio field setup** on the HearMe settings form to create it automatically.
 - The active provider can synthesize the node language.
 - Drupal cron is actually running.
+- If the node was edited repeatedly, older stale queue jobs may be skipped. A later job with the current content hash should attach the replacement audio.
 - Watchdog logs for provider failures.
 
 ## Inline Buttons Do Not Render

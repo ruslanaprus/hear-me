@@ -6,6 +6,7 @@ use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
 use Drupal\Core\Queue\Attribute\QueueWorker;
 use Drupal\Core\Queue\QueueWorkerBase;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
+use Drupal\hear_me\Service\HearMeNodeAudioQueue;
 use Drupal\hear_me\Service\HearMeService;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
@@ -21,14 +22,18 @@ class HearMeQueueWorker extends QueueWorkerBase implements ContainerFactoryPlugi
 
   protected HearMeService $ttsService;
 
+  protected HearMeNodeAudioQueue $nodeAudioQueue;
+
   public function __construct(
     array $configuration,
     $plugin_id,
     $plugin_definition,
     HearMeService $ttsService,
+    HearMeNodeAudioQueue $nodeAudioQueue,
   ) {
     parent::__construct($configuration, $plugin_id, $plugin_definition);
     $this->ttsService = $ttsService;
+    $this->nodeAudioQueue = $nodeAudioQueue;
   }
 
   public static function create(
@@ -42,6 +47,7 @@ class HearMeQueueWorker extends QueueWorkerBase implements ContainerFactoryPlugi
       $plugin_id,
       $plugin_definition,
       $container->get('hear_me.service'),
+      $container->get('hear_me.node_audio_queue'),
     );
   }
 
@@ -49,18 +55,32 @@ class HearMeQueueWorker extends QueueWorkerBase implements ContainerFactoryPlugi
    * {@inheritdoc}
    */
   public function processItem($data): void {
-    $text = $data['text'] ?? '';
-    $lang = $data['lang'] ?? $this->ttsService->getDefaultLang();
-    $nid  = $data['nid'] ?? NULL;
-
-    if (!$text) {
+    $nid = (int) ($data['nid'] ?? 0);
+    if ($nid <= 0) {
       return;
     }
 
-    $media = $this->ttsService->synthesize($text, $lang);
+    $current = $this->nodeAudioQueue->buildCurrentQueueItem($nid);
+    if ($current === NULL) {
+      return;
+    }
 
-    if ($media && $nid) {
-      $this->ttsService->attachMediaToNode((int) $nid, $media);
+    $queuedHash = (string) ($data['content_hash'] ?? '');
+    if ($queuedHash === '' && !empty($data['text'])) {
+      $queuedHash = $this->nodeAudioQueue->buildContentHash(
+        (string) $data['text'],
+        (string) ($data['lang'] ?? $this->ttsService->getDefaultLang()),
+      );
+    }
+
+    if ($queuedHash === '' || !hash_equals($current['content_hash'], $queuedHash)) {
+      return;
+    }
+
+    $media = $this->ttsService->synthesize($current['text'], $current['lang']);
+
+    if ($media) {
+      $this->ttsService->attachMediaToNode($nid, $media);
     }
   }
 

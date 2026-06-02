@@ -146,7 +146,7 @@ Language values come from these places:
 | Inline `<tts>` playback | The text filter writes `data-lang` on the generated button from the filter language code. If the language is missing or unspecified, it uses the provider's configured **Default Language**. |
 | Whole-page, selected text, and selected section playback | The block attaches `drupalSettings.hear_me.default_lang`. It uses the current Drupal interface language short code when the provider supports it, otherwise the provider's configured **Default Language**. |
 | Direct API requests | If `lang` is omitted or empty, the endpoint uses the provider's configured **Default Language**. |
-| Queue-based pre-generation | New node jobs use the node entity language. If it is unspecified, they use the provider's configured **Default Language**. |
+| Queue-based pre-generation | Insert and update jobs use the node entity language. If it is unspecified, they use the provider's configured **Default Language**. |
 
 Provider modules should return every code they can synthesise from `getSupportedLanguages()`. Configurable providers should store their fallback language in the `default_lang` key of `hear_me.provider.<provider_key>`.
 
@@ -161,7 +161,7 @@ Provider modules should return every code they can synthesise from `getSupported
 
 Runtime playback files are stored under `private://hear_me/tts/` by default. If **Runtime cache file storage** is changed to public, runtime files are stored at `public://tts/<hash>.<ext>` (typically `sites/default/files/tts/`). If caching is disabled, the source TTL is `0`, or the selected stream wrapper is unavailable, playback still works but the generated audio is returned directly and is not persisted.
 
-Queue-generated entity audio always uses `public://tts/<hash>.<ext>` because it is attached to content as Media.
+Queue-generated entity audio always uses `public://tts/<hash>.<ext>` because it is attached to content as Media. Enrolled nodes are queued on insert and when the title, body, or language changes. Each queue item includes a content hash, and the worker skips stale jobs before attaching Media.
 
 | Flow | File entity | Media entity | Cleanup behavior |
 |---|---|---|---|

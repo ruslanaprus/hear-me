@@ -1,7 +1,6 @@
 <?php
 
-use Drupal\Component\Utility\Html;
-use Drupal\Core\Language\LanguageInterface;
+use Drupal\Core\Entity\EntityInterface;
 
 /**
  * Implements hook_entity_insert().
@@ -12,37 +11,18 @@ use Drupal\Core\Language\LanguageInterface;
  * The list of bundles is configured at Administration > Configuration >
  * Media > HearMe TTS Settings. No bundles are enabled by default (opt-in)
  */
-function hear_me_entity_insert(\Drupal\Core\Entity\EntityInterface $entity) {
-  if ($entity->getEntityTypeId() !== 'node') {
-    return;
+function hear_me_entity_insert(EntityInterface $entity): void {
+  \Drupal::service('hear_me.node_audio_queue')->queueNode($entity);
+}
+
+/**
+ * Implements hook_entity_update().
+ */
+function hear_me_entity_update(EntityInterface $entity): void {
+  $nodeAudioQueue = \Drupal::service('hear_me.node_audio_queue');
+  if ($nodeAudioQueue->hasAudioSourceChanged($entity)) {
+    $nodeAudioQueue->queueNode($entity);
   }
-
-  $queueBundles = \Drupal::config('hear_me.settings')->get('queue_bundles') ?? [];
-  if (empty($queueBundles) || !in_array($entity->bundle(), $queueBundles, TRUE)) {
-    return;
-  }
-
-  $bodyText = $entity->hasField('body') ? ($entity->body->value ?? '') : '';
-  $bodyText = Html::decodeEntities(strip_tags($bodyText));
-  $bodyText = preg_replace('/[ \t\r\n]+/u', ' ', $bodyText) ?? $bodyText;
-  $text = trim($entity->getTitle() . ' ' . $bodyText);
-
-  $ttsService = \Drupal::service('hear_me.service');
-  $lang = $entity->language()->getId();
-  if (in_array($lang, [
-    '',
-    LanguageInterface::LANGCODE_NOT_SPECIFIED,
-    LanguageInterface::LANGCODE_NOT_APPLICABLE,
-    LanguageInterface::LANGCODE_DEFAULT,
-  ], TRUE)) {
-    $lang = $ttsService->getDefaultLang();
-  }
-
-  \Drupal::queue('hear_me_tts')->createItem([
-    'nid'  => $entity->id(),
-    'text' => $text,
-    'lang' => $lang,
-  ]);
 }
 
 /**

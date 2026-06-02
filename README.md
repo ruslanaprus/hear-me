@@ -2,7 +2,7 @@
 
 HearMe is a Drupal 11 accessibility module that adds text-to-speech (TTS) playback controls to content pages. It provides inline speaker buttons for marked text, a floating "Listen to this page" block, selected text playback, section selection playback, runtime audio caching. Clicking a speaker button synthesises the text and plays it back through an `<audio>` element — no page reload required.
 
-The module is built around an **open provider system**: any HTTP-based TTS service, cloud API, or custom backend can be plugged in by implementing a single PHP interface. Piper is included as the default provider, but it is not a requirement.
+The module is built around an **open provider system**: any HTTP-based TTS service, cloud API, or custom backend can be plugged in by implementing a single PHP interface. HearMe includes a built-in Piper-compatible HTTP adapter, but it does not include or run Piper itself.
 
 ---
 
@@ -41,7 +41,7 @@ audio bytes  ──►  optionally saved as File + cache metadata  ──►  re
 - Drupal core `media` module: Stores queue-generated/pre-generated audio as Media entities.
 - Drupal core `language` module (optional): Required for per-node language detection.
 - Drupal core `content_translation` (optional): Required to assign a language to individual nodes.
-- A reachable TTS backend. Piper is supported.
+- A reachable TTS backend. A Piper-compatible HTTP service is supported by the built-in adapter.
 
 Enable the optional modules only if your site has multilingual content. Without them all nodes default to the site language.
 
@@ -116,14 +116,14 @@ Important settings include:
 - Max request size and max text length.
 - Queue bundles and audio attachment field.
 - Audio field setup for selected content types.
-- Provider-specific settings such as Piper endpoint and languages.
+- Provider-specific settings such as the Piper-compatible endpoint and languages.
 
 See [Global settings](docs/installation.md#global-settings) for the full settings table and defaults.
 
 ## Documentation
 
 - [Installation](docs/installation.md)
-- [Piper provider](docs/piper.md)
+- [Piper HTTP adapter](docs/piper.md)
 - [Provider development](docs/providers.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Changelog](CHANGELOG.md)
@@ -136,7 +136,7 @@ See [docs/providers.md](docs/providers.md) for interfaces, service tags, and con
 
 ### External TTS service
 
-The module requires at least one registered TTS provider. The built-in **Piper provider** connects to a [Piper TTS HTTP service](https://github.com/ruslanaprus/piper-tts-service) that accepts `POST /tts` with `{ "text": "...", "lang": "..." }` and always returns `audio/wav`. The Piper service has no format selection parameter — WAV is its fixed output format. Other providers are free to return any audio format (MP3, OGG, etc.); the provider interface declares the MIME type and file extension so the module handles caching correctly regardless of format. Any service with a compatible request/response contract works — self-hosted, containerised, or cloud-hosted.
+The module requires at least one registered TTS provider. The built-in **Piper HTTP adapter** connects to an external [Piper-compatible TTS HTTP service](https://github.com/ruslanaprus/piper-tts-service) that accepts `POST /tts` with `{ "text": "...", "lang": "..." }` and returns `audio/wav`. HearMe does not include Piper binaries, voices, containers, or service code; site owners must provide an endpoint reachable from Drupal. The Piper-compatible service has no format selection parameter — WAV is its fixed output format. Other providers are free to return any audio format (MP3, OGG, etc.); the provider interface declares the MIME type and file extension so the module handles caching correctly regardless of format. Any service with a compatible request/response contract works — self-hosted, containerised, or cloud-hosted.
 
 See [Provider system](#provider-system) to connect a different service.
 

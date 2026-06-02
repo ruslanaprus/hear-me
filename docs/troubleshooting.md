@@ -85,13 +85,13 @@ Check the browser console and network tab first. Then check Drupal logs.
 
 Common causes:
 
-- Piper endpoint URL is not reachable from the Drupal server/container.
+- Piper-compatible endpoint URL is not reachable from the Drupal server/container.
 - Piper does not have a voice for the requested language.
 - The response is not an audio response.
 - Private files are not configured and runtime caching is expected to persist files.
 - Provider timeout or backend process failure.
 
-## Piper Works From The Host But Not From Drupal
+## Piper-Compatible Service Works From The Host But Not From Drupal
 
 In Docker, `localhost` means the current container. If Drupal and Piper are separate services, Drupal usually needs the Compose service name:
 

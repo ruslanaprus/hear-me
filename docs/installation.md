@@ -9,7 +9,7 @@ This guide covers installing HearMe as a Drupal 11 contributed module package.
 - Drupal core `file` module.
 - Drupal core `media` module.
 - Private files configured if you want the default private runtime cache to persist generated playback audio.
-- At least one TTS provider service. The module ships with a Piper provider.
+- At least one registered TTS provider and a reachable TTS backend. HearMe ships with a Piper-compatible HTTP adapter, but you must provide the external service endpoint.
 
 The module can run without Drupal's optional multilingual modules. Enable `language` and `content_translation` only if your site needs per-content language assignment.
 
@@ -64,7 +64,7 @@ Recommended first-pass settings:
 
 - Keep **Active TTS Provider** set to `piper` unless another provider module is installed.
 - Keep **Runtime cache file storage** set to `private` for authenticated or selected text playback.
-- Confirm the Piper endpoint URL is reachable from the Drupal server, not just from your browser.
+- Configure a Piper-compatible endpoint URL that is reachable from the Drupal server, not just from your browser.
 - Keep strict rate limits if granting playback to Anonymous users.
 
 ## Global Settings
@@ -87,6 +87,8 @@ Recommended first-pass settings:
 | **Queue TTS pre-generation for content types** | *(none)* | Content types whose new nodes and title/body/language updates should be queued for background synthesis. The saved config stores bundle machine names. Empty means none. |
 | **Maximum TTS request body size** | `32768` | Maximum JSON request body size accepted by `/hear-me/tts`, in bytes. Values are bounded between `1024` and `262144`. |
 | **Maximum TTS text length** | `5000` | Maximum normalized text length accepted by `/hear-me/tts`, in characters. Values are between `1` and `20000`. |
+
+The default Piper-compatible endpoint is intentionally empty in release installs. Configure it in the settings form or with an environment-specific Drupal config override such as `$config['hear_me.provider.piper']['endpoint']` in `settings.php`.
 
 ## Setup Actions
 

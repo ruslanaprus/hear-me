@@ -1,6 +1,6 @@
 name: HearMe
 type: module
-description: Provides text-to-speech integration with Piper microservice for accessibility.
+description: Provides text-to-speech playback controls with pluggable TTS providers for accessibility.
 core_version_requirement: ^11
 package: Accessibility
 configure: hear_me.settings

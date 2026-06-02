@@ -14,7 +14,7 @@ use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 
 /**
- * TTS provider that synthesises audio via a self-hosted Piper service.
+ * TTS provider adapter for a Piper-compatible HTTP service.
  */
 class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInterface {
 
@@ -70,8 +70,8 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
     $form['endpoint'] = [
       '#type'          => 'url',
       '#title'         => $this->t('Piper Endpoint URL'),
-      '#default_value' => $config['endpoint'] ?? 'http://piper-service:5000/tts',
-      '#description'   => $this->t('Full URL of the Piper TTS microservice. Drupal sends server-side HTTP POST requests to this URL, so use only endpoints you control or trust. Do not point it at user-supplied URLs or sensitive internal metadata services.'),
+      '#default_value' => $config['endpoint'] ?? '',
+      '#description'   => $this->t('Full URL of a Piper-compatible HTTP TTS endpoint. Drupal sends server-side HTTP POST requests to this URL, so use only endpoints you control or trust. Do not point it at user-supplied URLs or sensitive internal metadata services.'),
       '#required'      => TRUE,
       '#element_validate' => [[static::class, 'validateEndpointElement']],
     ];
@@ -132,32 +132,32 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
 
   protected static function getEndpointValidationError(string $endpoint): ?TranslatableMarkup {
     if (!UrlHelper::isValid($endpoint, TRUE)) {
-      return new TranslatableMarkup('The Piper endpoint must be an absolute URL, for example https://tts.example.com/tts.');
+      return new TranslatableMarkup('The Piper-compatible endpoint must be an absolute URL, for example https://tts.example.com/tts.');
     }
 
     $parts = parse_url($endpoint);
     if (!is_array($parts)) {
-      return new TranslatableMarkup('The Piper endpoint URL could not be parsed.');
+      return new TranslatableMarkup('The Piper-compatible endpoint URL could not be parsed.');
     }
 
     $scheme = strtolower((string) ($parts['scheme'] ?? ''));
     if (!in_array($scheme, ['http', 'https'], TRUE)) {
-      return new TranslatableMarkup('The Piper endpoint must use HTTP or HTTPS.');
+      return new TranslatableMarkup('The Piper-compatible endpoint must use HTTP or HTTPS.');
     }
 
     if (empty($parts['host'])) {
-      return new TranslatableMarkup('The Piper endpoint must include a host name.');
+      return new TranslatableMarkup('The Piper-compatible endpoint must include a host name.');
     }
 
     if (isset($parts['user']) || isset($parts['pass'])) {
-      return new TranslatableMarkup('Do not include usernames or passwords in the Piper endpoint URL.');
+      return new TranslatableMarkup('Do not include usernames or passwords in the Piper-compatible endpoint URL.');
     }
 
     return NULL;
   }
 
   /**
-   * Calls the Piper TTS microservice and returns the raw audio bytes.
+   * Calls the Piper-compatible HTTP endpoint and returns the raw audio bytes.
    *
    * Returns NULL on any failure; all failures are logged so they surface in
    * watchdog without crashing the caller.
@@ -166,7 +166,7 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
     $config   = $this->configFactory->get('hear_me.provider.piper');
     $endpoint = trim((string) $config->get('endpoint'));
     $validationError = $endpoint === ''
-      ? new TranslatableMarkup('The Piper endpoint is empty.')
+      ? new TranslatableMarkup('The Piper-compatible endpoint is empty.')
       : static::getEndpointValidationError($endpoint);
     if ($validationError !== NULL) {
       $this->logger->error('Piper TTS endpoint is invalid: @message', ['@message' => (string) $validationError]);

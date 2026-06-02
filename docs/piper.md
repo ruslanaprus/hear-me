@@ -1,12 +1,12 @@
-# Piper Provider
+# Piper HTTP Adapter
 
-HearMe includes a provider for a Piper-compatible HTTP TTS service.
+HearMe includes a provider adapter for a Piper-compatible HTTP TTS service. It does not include or run Piper, voice models, containers, or service code.
 
-Piper is a local neural text-to-speech engine. The provider expects an HTTP service that accepts JSON text/language input and returns WAV audio bytes.
+Piper is a local neural text-to-speech engine. The adapter expects an external HTTP service that accepts JSON text/language input and returns WAV audio bytes.
 
 ## API Contract
 
-The built-in provider sends:
+The built-in adapter sends:
 
 ```http
 POST /tts
@@ -26,7 +26,7 @@ The service must return:
 Content-Type: audio/wav
 ```
 
-The bundled provider treats Piper output as WAV only. Other providers can return other formats by implementing the provider interface and reporting a different MIME type and extension.
+The built-in adapter treats Piper-compatible output as WAV only. Other providers can return other formats by implementing the provider interface and reporting a different MIME type and extension.
 
 ## Docker Compose Example
 
@@ -51,7 +51,7 @@ services:
       retries: 3
 ```
 
-In HearMe settings, use:
+In HearMe settings, use the endpoint reachable from the Drupal container:
 
 ```text
 http://piper-service:5000/tts
@@ -59,15 +59,21 @@ http://piper-service:5000/tts
 
 Use a URL that is reachable from the Drupal server/container. `http://localhost:5000/tts` only works if Piper runs in the same container or same host network namespace as Drupal.
 
+Release installs leave the endpoint empty by default. Configure it in the UI or with an environment-specific Drupal config override, for example:
+
+```php
+$config['hear_me.provider.piper']['endpoint'] = getenv('HEAR_ME_PIPER_ENDPOINT') ?: 'https://tts.example.com/tts';
+```
+
 ## Provider Settings
 
 Go to **Administration > Configuration > Media > HearMe TTS**.
 
-Piper settings:
+Piper-compatible adapter settings:
 
 - **Piper Endpoint URL**: absolute URL to the `/tts` endpoint.
-- **Supported Language Codes**: comma-separated list of language codes the service can handle, for example, `en, uk`. Must match the voice models installed on the Piper service.
-- **Default Language**: fallback language used when tno language can be resolved from the page context.
+- **Supported Language Codes**: comma-separated list of language codes the service can handle, for example, `en, uk`. Must match the voice models installed on the external service.
+- **Default Language**: fallback language used when no language can be resolved from the page context.
 
 The endpoint URL must not contain usernames or passwords. If authentication is required, put Piper behind an internal proxy and implement authentication there, or create a custom provider that sends the required headers securely.
 

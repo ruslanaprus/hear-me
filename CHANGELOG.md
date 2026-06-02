@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Inline `<tts>...</tts>` text filter with generated speaker controls.
 - Floating "Listen to this page" block with whole-page, selected-text, and section selection playback.
 - Provider system based on tagged Drupal services.
-- Built-in Piper HTTP provider.
+- Built-in Piper-compatible HTTP adapter.
 - Runtime audio cache metadata table with private/public file storage support.
 - Flood API rate limits and daily/monthly quotas for synthesis requests.
 - Queue worker `hear_me_tts` for cron-based entity audio pre-generation.

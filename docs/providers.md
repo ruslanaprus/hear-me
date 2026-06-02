@@ -2,7 +2,7 @@
 
 HearMe discovers TTS providers as Drupal services tagged with `hear_me.provider`.
 
-The built-in Piper provider is only one implementation. A provider can call a local service, a private HTTP API, or a cloud TTS API.
+The built-in Piper-compatible HTTP adapter is only one implementation. A provider can call a local service, a private HTTP API, or a cloud TTS API.
 
 ## Required Interface
 
@@ -47,7 +47,7 @@ Clear caches after adding or changing provider services.
 
 ### Provider config namespace
 
-Each provider should store its settings in a config object named `hear_me.provider.<provider_key>`. The settings form and `HearMeService` resolve provider config by that naming convention. For example, the Piper provider uses `hear_me.provider.piper`.
+Each provider should store its settings in a config object named `hear_me.provider.<provider_key>`. The settings form and `HearMeService` resolve provider config by that naming convention. For example, the built-in Piper-compatible adapter uses `hear_me.provider.piper`.
 
 **Example: connecting a cloud API**
 

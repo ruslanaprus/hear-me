@@ -67,7 +67,7 @@ services:
       - '@logger.factory'
       - '@private_key'
 
-  # Piper provider
+  # Piper-compatible HTTP adapter.
   hear_me.provider.piper:
     class: Drupal\hear_me\Plugin\TtsProvider\PiperProvider
     arguments:

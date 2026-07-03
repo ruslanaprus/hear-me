@@ -40,6 +40,16 @@ services:
       - '@queue'
       - '@logger.factory'
 
+  # Existing node backfill queue manager
+  hear_me.existing_content_queue:
+    class: Drupal\hear_me\Service\HearMeExistingContentQueue
+    arguments:
+      - '@config.factory'
+      - '@entity_type.manager'
+      - '@entity_field.manager'
+      - '@hear_me.node_audio_queue'
+      - '@hear_me.service'
+
   # Installation and runtime readiness checks for the admin settings form
   hear_me.setup_status:
     class: Drupal\hear_me\Service\HearMeSetupStatus

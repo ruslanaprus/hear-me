@@ -97,6 +97,36 @@ The default Piper-compatible endpoint is intentionally empty in release installs
 | **Test provider connection** | Calls the active provider from Drupal using the configured default language and stores the latest result for **Setup status**. |
 | **Clear generated runtime audio cache** | Removes tracked runtime playback cache entries. Queue-generated media attached to content is not cleared by this action. |
 | **Create HearMe audio field** | Creates the configured media reference field on selected content types, restricted to the HearMe Audio media type. Existing fields are skipped. |
+| **Queue existing content** | Adds queue jobs for existing nodes in configured queue bundles. Audio is generated later by cron or queue workers. |
+
+## Backfill Existing Content
+
+When installing HearMe on a site that already has content, create the configured audio field first, then use **Queue existing content** from the settings page.
+
+Defaults are conservative:
+
+- Only content types selected under **Queue TTS pre-generation for content types** are scanned.
+- Only published nodes are scanned unless **Include unpublished content** is checked.
+- Only nodes with an empty configured TTS audio field are queued unless **Requeue content that already has audio** is checked.
+- Existing attached audio remains visible until a queued replacement succeeds.
+
+The admin action uses Drupal Batch API and only creates queue jobs. Cron or queue workers perform the actual TTS synthesis later.
+
+If Drush is installed, the same backfill is available from the command line:
+
+```bash
+drush hear-me:queue-existing
+```
+
+Useful options:
+
+```bash
+drush hear-me:queue-existing --bundles=article,page --limit=5000
+drush hear-me:queue-existing --include-unpublished
+drush hear-me:queue-existing --requeue-existing
+```
+
+The command uses the configured queue bundles by default. A `--bundles` value can only narrow that configured set; it does not queue content types that are not enabled in HearMe settings.
 
 ## Permissions
 

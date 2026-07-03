@@ -116,9 +116,14 @@ Important settings include:
 - Max request size and max text length.
 - Queue bundles and audio attachment field.
 - Audio field setup for selected content types.
+- Existing content backfill through the settings form or Drush.
 - Provider-specific settings such as the Piper-compatible endpoint and languages.
 
 See [Global settings](docs/installation.md#global-settings) for the full settings table and defaults.
+
+### Existing Content Backfill
+
+After installing HearMe on a site that already has content, use **Queue existing content** on the settings page to add background audio-generation jobs for configured content types. If Drush is installed, the same backfill is available with `drush hear-me:queue-existing`.
 
 ## Documentation
 

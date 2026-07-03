@@ -35,6 +35,14 @@ class HearMeNodeAudioQueue {
       return FALSE;
     }
 
+    $this->queueItem($queueItem);
+    return TRUE;
+  }
+
+  /**
+   * Adds a prebuilt node audio item to the queue.
+   */
+  public function queueItem(array $queueItem): bool {
     $this->queueFactory->get('hear_me_tts')->createItem($queueItem);
     return TRUE;
   }

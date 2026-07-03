@@ -1,0 +1,7 @@
+services:
+  hear_me.commands:
+    class: Drupal\hear_me\Drush\Commands\HearMeCommands
+    arguments:
+      - '@hear_me.existing_content_queue'
+    tags:
+      - { name: drush.command }

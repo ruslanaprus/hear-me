@@ -13,6 +13,7 @@ use Drupal\Core\Session\AccountInterface;
 use Drupal\field\Entity\FieldConfig;
 use Drupal\field\Entity\FieldStorageConfig;
 use Drupal\hear_me\Plugin\TtsProvider\TtsProviderConfigurableInterface;
+use Drupal\hear_me\Service\HearMeExistingContentQueue;
 use Drupal\hear_me\Service\HearMeService;
 use Drupal\hear_me\Service\HearMeInputValidator;
 use Drupal\hear_me\Service\HearMeSetupStatus;
@@ -34,6 +35,8 @@ class HearMeSettingsForm extends ConfigFormBase {
 
   protected HearMeSetupStatus $setupStatus;
 
+  protected HearMeExistingContentQueue $existingContentQueue;
+
   public function __construct(
     ConfigFactoryInterface $configFactory,
     TypedConfigManagerInterface $typedConfigManager,
@@ -41,12 +44,14 @@ class HearMeSettingsForm extends ConfigFormBase {
     EntityTypeManagerInterface $entityTypeManager,
     TtsCacheManager $cacheManager,
     HearMeSetupStatus $setupStatus,
+    HearMeExistingContentQueue $existingContentQueue,
   ) {
     parent::__construct($configFactory, $typedConfigManager);
     $this->ttsService        = $ttsService;
     $this->entityTypeManager = $entityTypeManager;
     $this->cacheManager      = $cacheManager;
     $this->setupStatus       = $setupStatus;
+    $this->existingContentQueue = $existingContentQueue;
   }
 
   public static function create(ContainerInterface $container): static {
@@ -57,6 +62,7 @@ class HearMeSettingsForm extends ConfigFormBase {
       $container->get('entity_type.manager'),
       $container->get('hear_me.cache_manager'),
       $container->get('hear_me.setup_status'),
+      $container->get('hear_me.existing_content_queue'),
     );
   }
 
@@ -358,6 +364,40 @@ class HearMeSettingsForm extends ConfigFormBase {
       ],
     ];
 
+    $form['existing_content_queue'] = [
+      '#type' => 'details',
+      '#title' => $this->t('Existing content audio generation'),
+      '#open' => FALSE,
+      '#tree' => TRUE,
+      '#description' => $this->t('Queue audio generation for existing nodes in the selected content types. This only adds queue jobs; cron or queue workers generate and attach audio later.'),
+    ];
+
+    $form['existing_content_queue']['include_unpublished'] = [
+      '#type' => 'checkbox',
+      '#title' => $this->t('Include unpublished content'),
+      '#description' => $this->t('Leave unchecked to queue only published nodes.'),
+      '#default_value' => FALSE,
+    ];
+
+    $form['existing_content_queue']['requeue_existing'] = [
+      '#type' => 'checkbox',
+      '#title' => $this->t('Requeue content that already has audio'),
+      '#description' => $this->t('Leave unchecked to queue only nodes whose configured TTS audio field is empty. Existing attached audio remains visible until a queued replacement succeeds.'),
+      '#default_value' => FALSE,
+    ];
+
+    $form['existing_content_queue']['queue_existing_content'] = [
+      '#type' => 'submit',
+      '#value' => $this->t('Queue existing content'),
+      '#submit' => ['::queueExistingContentSubmit'],
+      '#validate' => ['::validateQueueExistingContent'],
+      '#limit_validation_errors' => [
+        ['tts_audio_field'],
+        ['queue_bundles'],
+        ['existing_content_queue'],
+      ],
+    ];
+
     $form['provider_settings'] = [
       '#type'       => 'fieldset',
       '#title'      => $this->t('Provider Settings'),
@@ -440,6 +480,21 @@ class HearMeSettingsForm extends ConfigFormBase {
     $storage = FieldStorageConfig::loadByName('node', $fieldName);
     if ($storage && !$this->isCompatibleAudioFieldStorage($storage)) {
       $form_state->setErrorByName('tts_audio_field', $this->t('The field @field already exists on content and is not a media reference field. Choose a different field machine name.', ['@field' => $fieldName]));
+    }
+  }
+
+  public function validateQueueExistingContent(array &$form, FormStateInterface $form_state): void {
+    $this->validateAudioFieldName((string) $form_state->getValue('tts_audio_field'), 'tts_audio_field', $form_state);
+
+    $bundles = array_values(array_filter($form_state->getValue('queue_bundles') ?? []));
+    if (!$bundles) {
+      $form_state->setErrorByName('queue_bundles', $this->t('Select at least one content type for Queue TTS pre-generation before queueing existing content.'));
+      return;
+    }
+
+    $fieldName = (string) $form_state->getValue('tts_audio_field');
+    if (!$this->existingContentQueue->getBundlesWithAudioField($bundles, $fieldName)) {
+      $form_state->setErrorByName('existing_content_queue', $this->t('Create the configured HearMe audio field on at least one selected content type before queueing existing content.'));
     }
   }
 
@@ -582,6 +637,105 @@ class HearMeSettingsForm extends ConfigFormBase {
     }
 
     $form_state->setRebuild(TRUE);
+  }
+
+  public function queueExistingContentSubmit(array &$form, FormStateInterface $form_state): void {
+    $fieldName = (string) $form_state->getValue('tts_audio_field');
+    $queueBundles = array_values(array_filter($form_state->getValue('queue_bundles') ?? []));
+    $options = $form_state->getValue('existing_content_queue') ?? [];
+
+    $this->configFactory->getEditable('hear_me.settings')
+      ->set('tts_audio_field', $fieldName)
+      ->set('queue_bundles', $queueBundles)
+      ->save();
+
+    batch_set([
+      'title' => $this->t('Queueing existing content for HearMe audio'),
+      'operations' => [
+        [
+          [static::class, 'queueExistingContentBatchOperation'],
+          [[
+            'bundles' => $queueBundles,
+            'published_only' => empty($options['include_unpublished']),
+            'missing_only' => empty($options['requeue_existing']),
+            'batch_size' => HearMeExistingContentQueue::DEFAULT_BATCH_SIZE,
+          ]],
+        ],
+      ],
+      'finished' => [static::class, 'queueExistingContentBatchFinished'],
+      'progress_message' => $this->t('Queueing existing content audio jobs.'),
+    ]);
+  }
+
+  public static function queueExistingContentBatchOperation(array $options, array &$context): void {
+    /** @var \Drupal\hear_me\Service\HearMeExistingContentQueue $queueService */
+    $queueService = \Drupal::service('hear_me.existing_content_queue');
+    $bundles = $options['bundles'] ?? [];
+    $publishedOnly = (bool) ($options['published_only'] ?? TRUE);
+    $missingOnly = (bool) ($options['missing_only'] ?? TRUE);
+    $batchSize = (int) ($options['batch_size'] ?? HearMeExistingContentQueue::DEFAULT_BATCH_SIZE);
+
+    if (empty($context['sandbox']['initialized'])) {
+      $context['sandbox']['initialized'] = TRUE;
+      $context['sandbox']['last_nid'] = 0;
+      $context['sandbox']['scanned'] = 0;
+      $context['sandbox']['total'] = $queueService->countCandidateNodes($bundles, $publishedOnly);
+      $context['results'] = $queueService->emptyStats();
+    }
+
+    $result = $queueService->queueNextBatch(
+      $bundles,
+      $publishedOnly,
+      $missingOnly,
+      (int) $context['sandbox']['last_nid'],
+      $batchSize,
+    );
+
+    $context['sandbox']['last_nid'] = (int) $result['last_nid'];
+    $context['sandbox']['scanned'] += (int) ($result['stats']['scanned'] ?? 0);
+    $context['results'] = $queueService->mergeStats($context['results'], $result['stats']);
+
+    $context['message'] = \Drupal::translation()->formatPlural(
+      (int) ($context['results']['queued'] ?? 0),
+      'Queued 1 existing content audio job.',
+      'Queued @count existing content audio jobs.',
+    );
+
+    $total = (int) $context['sandbox']['total'];
+    if (!$result['processed_nids'] || $total === 0 || $context['sandbox']['scanned'] >= $total) {
+      $context['finished'] = 1;
+      return;
+    }
+
+    $context['finished'] = min(0.99, $context['sandbox']['scanned'] / $total);
+  }
+
+  public static function queueExistingContentBatchFinished(bool $success, array $results, array $operations): void {
+    if (!$success) {
+      \Drupal::messenger()->addError(\Drupal::translation()->translate('Queueing existing content did not complete. Check recent log messages for details.'));
+      return;
+    }
+
+    \Drupal::messenger()->addStatus(\Drupal::translation()->translate('Existing content queueing finished. Scanned @scanned node(s), queued @queued audio job(s).', [
+      '@scanned' => (int) ($results['scanned'] ?? 0),
+      '@queued' => (int) ($results['queued'] ?? 0),
+    ]));
+
+    $skipped = (int) ($results['skipped_existing_audio'] ?? 0)
+      + (int) ($results['skipped_field_missing'] ?? 0)
+      + (int) ($results['skipped_source_empty'] ?? 0)
+      + (int) ($results['skipped_unsupported_language'] ?? 0)
+      + (int) ($results['skipped_not_loaded'] ?? 0);
+    if ($skipped > 0) {
+      \Drupal::messenger()->addWarning(\Drupal::translation()->translate('Skipped @skipped node(s): @existing already had audio, @field missing the audio field, @empty had no source text, @unsupported used an unsupported language, @missing could not be loaded.', [
+        '@skipped' => $skipped,
+        '@existing' => (int) ($results['skipped_existing_audio'] ?? 0),
+        '@field' => (int) ($results['skipped_field_missing'] ?? 0),
+        '@empty' => (int) ($results['skipped_source_empty'] ?? 0),
+        '@unsupported' => (int) ($results['skipped_unsupported_language'] ?? 0),
+        '@missing' => (int) ($results['skipped_not_loaded'] ?? 0),
+      ]));
+    }
   }
 
   protected function anonymousCanUseTts(): bool {

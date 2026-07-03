@@ -111,6 +111,12 @@ Runtime cache persistence requires:
 
 By default, HearMe uses private files. Configure `file_private_path` or switch **Runtime cache file storage** to public if generated audio is safe to expose by URL.
 
+## Existing Content Was Not Queued
+
+The backfill action only scans content types selected under **Queue TTS pre-generation for content types**. It skips nodes when the configured TTS audio field is missing, the field already has audio and missing-only mode is used, the node has no source text, or the resolved language is not supported by the active provider.
+
+Use **Create HearMe audio field** first, then run **Queue existing content** again. With Drush installed, use `drush hear-me:queue-existing --requeue-existing` when existing attached audio should be regenerated.
+
 ## Generated Files Are Public
 
 Runtime files are private by default, but can be public if **Runtime cache file storage** is set to public.

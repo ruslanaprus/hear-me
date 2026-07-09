@@ -56,6 +56,12 @@ hear_me.settings:
       sequence:
         type: string
         label: 'Bundle machine name'
+    replace_existing_generated_audio:
+      type: boolean
+      label: 'Replace existing HearMe-generated audio when content changes'
+    overwrite_manual_audio:
+      type: boolean
+      label: 'Overwrite manually selected audio'
     max_request_bytes:
       type: integer
       label: 'Maximum TTS request body size in bytes'

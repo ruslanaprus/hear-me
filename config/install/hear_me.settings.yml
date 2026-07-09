@@ -15,5 +15,7 @@ daily_user_quota: 500
 monthly_user_quota: 5000
 tts_audio_field: 'field_tts_audio'
 queue_bundles: []
+replace_existing_generated_audio: true
+overwrite_manual_audio: false
 max_request_bytes: 32768
 max_text_length: 5000

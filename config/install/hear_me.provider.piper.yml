@@ -1,4 +1,5 @@
 endpoint: ''
+allow_private_endpoint_urls: false
 default_lang: 'en'
 supported_langs:
   - 'en'

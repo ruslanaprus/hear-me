@@ -76,6 +76,9 @@ hear_me.provider.piper:
     endpoint:
       type: string
       label: 'Piper TTS endpoint URL'
+    allow_private_endpoint_urls:
+      type: boolean
+      label: 'Allow local/private provider endpoints'
     default_lang:
       type: string
       label: 'Default language code'

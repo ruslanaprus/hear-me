@@ -67,6 +67,13 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
   }
 
   public function buildConfigForm(array $form, array $config): array {
+    $form['allow_private_endpoint_urls'] = [
+      '#type' => 'checkbox',
+      '#title' => $this->t('Allow local/private provider endpoints'),
+      '#default_value' => $config['allow_private_endpoint_urls'] ?? FALSE,
+      '#description' => $this->t('Keep disabled unless the Piper-compatible service intentionally runs on a trusted loopback, private, link-local, or reserved IP address. Docker/DDEV service names such as piper-service are hostnames and do not require this option.'),
+    ];
+
     $form['endpoint'] = [
       '#type'          => 'url',
       '#title'         => $this->t('Piper Endpoint URL'),
@@ -111,6 +118,7 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
 
     $this->configFactory->getEditable('hear_me.provider.piper')
       ->set('endpoint',        $endpoint)
+      ->set('allow_private_endpoint_urls', (bool) ($providerSettings['allow_private_endpoint_urls'] ?? $form_state->getValue('allow_private_endpoint_urls') ?? FALSE))
       ->set('default_lang',    $providerSettings['default_lang'] ?? $form_state->getValue('default_lang'))
       ->set('supported_langs', $langs)
       ->save();
@@ -124,13 +132,15 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
       return;
     }
 
-    $validationError = static::getEndpointValidationError($endpoint);
+    $providerSettings = $form_state->getValue('provider_settings') ?? [];
+    $allowPrivateEndpointUrls = (bool) ($providerSettings['allow_private_endpoint_urls'] ?? FALSE);
+    $validationError = static::getEndpointValidationError($endpoint, $allowPrivateEndpointUrls);
     if ($validationError !== NULL) {
       $form_state->setError($element, $validationError);
     }
   }
 
-  protected static function getEndpointValidationError(string $endpoint): ?TranslatableMarkup {
+  protected static function getEndpointValidationError(string $endpoint, bool $allowPrivateEndpointUrls = FALSE): ?TranslatableMarkup {
     if (!UrlHelper::isValid($endpoint, TRUE)) {
       return new TranslatableMarkup('The Piper-compatible endpoint must be an absolute URL, for example https://tts.example.com/tts.');
     }
@@ -153,7 +163,38 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
       return new TranslatableMarkup('Do not include usernames or passwords in the Piper-compatible endpoint URL.');
     }
 
+    if (isset($parts['fragment'])) {
+      return new TranslatableMarkup('Do not include URL fragments in the Piper-compatible endpoint URL.');
+    }
+
+    $host = strtolower(trim((string) $parts['host'], '[]'));
+    $host = rtrim($host, '.');
+    if (static::isMetadataIpLiteral($host)) {
+      return new TranslatableMarkup('Metadata service endpoint URLs are blocked. Do not point the Piper-compatible endpoint at 169.254.169.254 or equivalent metadata services.');
+    }
+
+    if (!$allowPrivateEndpointUrls && ($host === 'localhost' || str_ends_with($host, '.localhost'))) {
+      return new TranslatableMarkup('Localhost endpoint URLs are blocked by default. Enable local/private provider endpoints only when the service is trusted.');
+    }
+
+    if (!$allowPrivateEndpointUrls && static::isNonPublicIpLiteral($host)) {
+      return new TranslatableMarkup('Loopback, private, link-local, multicast, and reserved IP endpoint URLs are blocked by default. Enable local/private provider endpoints only when the service is trusted.');
+    }
+
     return NULL;
+  }
+
+  protected static function isMetadataIpLiteral(string $host): bool {
+    return $host === '169.254.169.254'
+      || $host === 'fd00:ec2::254';
+  }
+
+  protected static function isNonPublicIpLiteral(string $host): bool {
+    if (!filter_var($host, FILTER_VALIDATE_IP)) {
+      return FALSE;
+    }
+
+    return !filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
   }
 
   /**
@@ -165,9 +206,10 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
   public function synthesize(string $text, string $lang): ?TtsSynthesisResult {
     $config   = $this->configFactory->get('hear_me.provider.piper');
     $endpoint = trim((string) $config->get('endpoint'));
+    $allowPrivateEndpointUrls = (bool) ($config->get('allow_private_endpoint_urls') ?? FALSE);
     $validationError = $endpoint === ''
       ? new TranslatableMarkup('The Piper-compatible endpoint is empty.')
-      : static::getEndpointValidationError($endpoint);
+      : static::getEndpointValidationError($endpoint, $allowPrivateEndpointUrls);
     if ($validationError !== NULL) {
       $this->logger->error('Piper TTS endpoint is invalid: @message', ['@message' => (string) $validationError]);
       return NULL;
@@ -178,6 +220,10 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
         'json' => ['text' => $text, 'lang' => $lang],
         'connect_timeout' => 5,
         'timeout' => 30,
+        'allow_redirects' => FALSE,
+        'headers' => [
+          'Accept' => 'audio/*',
+        ],
       ]);
     }
     catch (GuzzleException $e) {
@@ -200,6 +246,19 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
           '@code'     => $statusCode,
           '@endpoint' => $endpoint,
           '@lang'     => $lang,
+        ]
+      );
+      return NULL;
+    }
+
+    $contentType = strtolower(trim($response->getHeaderLine('Content-Type')));
+    if ($contentType === '' || !str_starts_with($contentType, 'audio/')) {
+      $this->logger->warning(
+        'Piper TTS returned non-audio Content-Type @type (endpoint: @endpoint, lang: @lang).',
+        [
+          '@type' => $contentType === '' ? 'none' : $contentType,
+          '@endpoint' => $endpoint,
+          '@lang' => $lang,
         ]
       );
       return NULL;

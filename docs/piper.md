@@ -26,7 +26,7 @@ The service must return:
 Content-Type: audio/wav
 ```
 
-The built-in adapter treats Piper-compatible output as WAV only. Other providers can return other formats by implementing the provider interface and reporting a different MIME type and extension.
+The response `Content-Type` must start with `audio/`. The built-in adapter treats Piper-compatible output as WAV only. Other providers can return other formats by implementing the provider interface and reporting a different MIME type and extension.
 
 ## Docker Compose Example
 
@@ -57,7 +57,9 @@ In HearMe settings, use the endpoint reachable from the Drupal container:
 http://piper-service:5000/tts
 ```
 
-Use a URL that is reachable from the Drupal server/container. `http://localhost:5000/tts` only works if Piper runs in the same container or same host network namespace as Drupal.
+Use a URL that is reachable from the Drupal server/container. Docker service names such as `http://piper-service:5000/tts` are allowed by default because they are hostnames, not IP literals. `http://localhost:5000/tts` only works if Piper runs in the same container or same host network namespace as Drupal, and requires enabling **Allow local/private provider endpoints**.
+
+For DDEV or similar local environments, prefer the service hostname on the project network, for example `http://piper:5000/tts` if your custom service is named `piper`. Literal private IP addresses, `localhost`, and `127.0.0.1` require the local/private endpoint opt-in.
 
 Release installs leave the endpoint empty by default. Configure it in the UI or with an environment-specific Drupal config override, for example:
 
@@ -71,11 +73,14 @@ Go to **Administration > Configuration > Media > HearMe TTS**.
 
 Piper-compatible adapter settings:
 
+- **Allow local/private provider endpoints**: default off. Enables trusted loopback, private, link-local, or reserved IP literal endpoints for local/self-hosted deployments. Metadata service IPs such as `169.254.169.254` remain blocked.
 - **Piper Endpoint URL**: absolute URL to the `/tts` endpoint.
 - **Supported Language Codes**: comma-separated list of language codes the service can handle, for example, `en, uk`. Must match the voice models installed on the external service.
 - **Default Language**: fallback language used when no language can be resolved from the page context.
 
-The endpoint URL must not contain usernames or passwords. If authentication is required, put Piper behind an internal proxy and implement authentication there, or create a custom provider that sends the required headers securely.
+The endpoint URL must use HTTP or HTTPS, include a host, and must not contain usernames, passwords, or URL fragments. Obvious metadata service IP literals are blocked. Loopback, private, link-local, multicast, and reserved IP literal endpoints are blocked unless **Allow local/private provider endpoints** is enabled. DNS hostnames are not resolved during validation so local Docker/DDEV service names continue to work; use only hostnames you control or trust.
+
+If authentication is required, put Piper behind an internal proxy and implement authentication there, or create a custom provider that sends the required headers securely.
 
 ## Voice Registry
 
@@ -124,6 +129,8 @@ curl -X POST http://piper-service:5000/tts \
 ## Security
 
 Do not expose an unauthenticated Piper service directly to the public internet. Keep it on a private network or behind an authenticating reverse proxy.
+
+Drupal sends server-side HTTP requests to the configured endpoint. To reduce SSRF risk, the built-in adapter disables redirects, blocks metadata service IP literals, blocks private/local IP literals by default, and rejects non-audio `200 OK` responses.
 
 Even when Piper is private, the Drupal `/hear-me/tts` endpoint can expose resource consumption to site users. Use HearMe permissions, rate limits, quotas, and cache retention settings appropriately.
 

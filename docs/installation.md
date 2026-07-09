@@ -101,7 +101,7 @@ The default Piper-compatible endpoint is intentionally empty in release installs
 | **Test provider connection** | Calls the active provider from Drupal using the configured default language and stores the latest result for **Setup status**. |
 | **Clear generated runtime audio cache** | Removes tracked runtime playback cache entries. Queue-generated media attached to content is not cleared by this action. |
 | **Create HearMe audio field** | Creates the configured media reference field on selected content types, restricted to the HearMe Audio media type. Existing fields are skipped. |
-| **Queue existing content** | Adds queue jobs for existing nodes in configured queue bundles. Audio is generated later by cron or queue workers. |
+| **Queue existing content** | Shows a confirmation preview for existing nodes in selected queue bundles. The confirmed action adds queue jobs; audio is generated later by cron or queue workers. |
 
 ## Audio Field Compatibility
 
@@ -120,6 +120,8 @@ If **Overwrite manually selected audio** is disabled and selected content types 
 
 When installing HearMe on a site that already has content, create the configured audio field first, then use **Queue existing content** from the settings page.
 
+The first click does not queue jobs. It shows a confirmation preview with the estimated candidate node count, selected content types, published-only versus unpublished mode, and missing-only versus requeue-existing mode. Review the preview, then click **Confirm queue existing content** to start the Batch API enqueue operation or **Cancel** to leave without queueing jobs. If you change any backfill settings after the preview is generated, review the estimate again before confirming.
+
 Defaults are conservative:
 
 - Only content types selected under **Queue TTS pre-generation for content types** are scanned.
@@ -131,7 +133,7 @@ Defaults are conservative:
 
 HearMe treats existing `hear_me_audio` media that points to generated files under `public://tts/` as HearMe-generated audio. Other existing values are treated as manual or unknown and are protected by default.
 
-The admin action uses Drupal Batch API and only creates queue jobs. Cron or queue workers perform the actual TTS synthesis later.
+The confirmed admin action uses Drupal Batch API and only creates queue jobs. Cron or queue workers perform the actual TTS synthesis later.
 
 Queue-generated audio is saved under `public://tts/` as Drupal Media/File entities. Do not queue unpublished, access-restricted, or otherwise sensitive content unless the generated audio is safe to expose as a public file.
 

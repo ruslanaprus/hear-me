@@ -109,9 +109,14 @@ class HearMeExistingContentQueue {
    *
    * @param string[] $bundles
    *   Optional configured bundle filter.
+   * @param string|null $fieldName
+   *   Optional audio field machine name.
+   * @param bool $restrictToConfigured
+   *   Whether to intersect the bundle list with saved queue settings.
    */
-  public function countCandidateNodes(array $bundles = [], bool $publishedOnly = TRUE): int {
-    $bundles = $this->getBundlesWithAudioField($this->filterConfiguredBundles($bundles));
+  public function countCandidateNodes(array $bundles = [], bool $publishedOnly = TRUE, ?string $fieldName = NULL, bool $restrictToConfigured = TRUE): int {
+    $bundles = $restrictToConfigured ? $this->filterConfiguredBundles($bundles) : $this->normalizeBundles($bundles);
+    $bundles = $this->getBundlesWithAudioField($bundles, $fieldName);
     if (!$bundles) {
       return 0;
     }

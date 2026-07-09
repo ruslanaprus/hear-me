@@ -344,6 +344,10 @@ class HearMeSettingsForm extends ConfigFormBase {
       '#default_value' => $config->get('queue_bundles') ?? [],
     ];
 
+    $form['queue_generated_audio_public_warning'] = $this->buildWarning(
+      $this->t('Queue-generated audio attached to content is saved as Media/File entities under public://tts/. Those files can be publicly reachable by URL, including audio generated from unpublished or access-restricted content. Only enable queue pre-generation for content that is safe to expose as generated audio.')
+    );
+
     $form['replace_existing_generated_audio'] = [
       '#type' => 'checkbox',
       '#title' => $this->t('Replace existing HearMe-generated audio when content changes'),
@@ -392,10 +396,27 @@ class HearMeSettingsForm extends ConfigFormBase {
       '#description' => $this->t('Queue audio generation for existing nodes in the selected content types. This only adds queue jobs; cron or queue workers generate and attach audio later.'),
     ];
 
+    $form['existing_content_queue']['public_audio_warning'] = $this->buildWarning(
+      $this->t('Backfilled audio is saved under public://tts/ as generated Media/File entities. Do not include unpublished or access-restricted content unless the generated audio is safe to expose by public file URL.')
+    );
+
+    $form['existing_content_queue']['unpublished_audio_warning'] = [
+      '#type' => 'item',
+      '#title' => $this->t('Unpublished content warning'),
+      '#markup' => $this->t('If you check Include unpublished content, HearMe may generate public audio files from draft or access-restricted text. You must confirm this separately before queueing.'),
+    ];
+
     $form['existing_content_queue']['include_unpublished'] = [
       '#type' => 'checkbox',
       '#title' => $this->t('Include unpublished content'),
-      '#description' => $this->t('Leave unchecked to queue only published nodes.'),
+      '#description' => $this->t('Leave unchecked to queue only published nodes. Check this only when generated audio for unpublished content is safe to expose as public media.'),
+      '#default_value' => FALSE,
+    ];
+
+    $form['existing_content_queue']['confirm_unpublished_public_audio'] = [
+      '#type' => 'checkbox',
+      '#title' => $this->t('I understand unpublished content audio may be publicly accessible'),
+      '#description' => $this->t('Required only when Include unpublished content is checked.'),
       '#default_value' => FALSE,
     ];
 
@@ -549,6 +570,11 @@ class HearMeSettingsForm extends ConfigFormBase {
       $form_state->setErrorByName('existing_content_queue', $this->t('The configured TTS audio field is not compatible with every selected content type: @messages', [
         '@messages' => $this->formatValidationMessages($summary['errors']),
       ]));
+    }
+
+    $options = $form_state->getValue('existing_content_queue') ?? [];
+    if (!empty($options['include_unpublished']) && empty($options['confirm_unpublished_public_audio'])) {
+      $form_state->setErrorByName('existing_content_queue][confirm_unpublished_public_audio', $this->t('Confirm that generated audio for unpublished content may be publicly accessible before queueing unpublished content.'));
     }
   }
 

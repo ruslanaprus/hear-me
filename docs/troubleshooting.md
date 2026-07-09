@@ -109,7 +109,7 @@ Runtime cache persistence requires:
 - The TTL for the source type is greater than `0`.
 - The selected stream wrapper is available.
 
-By default, HearMe uses private files. Configure `file_private_path` or switch **Runtime cache file storage** to public if generated audio is safe to expose by URL.
+By default, `/hear-me/tts` runtime playback caching uses private files. Configure `file_private_path` or switch **Runtime cache file storage** to public only if click-generated runtime audio is safe to expose by URL. This setting does not make queue-generated entity audio private.
 
 ## Existing Content Was Not Queued
 
@@ -121,7 +121,9 @@ Use **Create HearMe audio field** first, then run **Queue existing content** aga
 
 Runtime files are private by default, but can be public if **Runtime cache file storage** is set to public.
 
-Queue-generated entity audio uses `public://tts/` because it is intended to be attached as media. Review site access requirements before exposing generated media.
+Queue-generated entity audio uses `public://tts/` because it is intended to be attached as Media/File entities. Review site access requirements before exposing generated media.
+
+If unpublished or access-restricted content was queued, generated audio files may still be reachable by public file URL. Remove the generated media/files or regenerate only published public-safe content.
 
 ## Uninstall Is Blocked
 

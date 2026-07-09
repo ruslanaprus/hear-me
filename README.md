@@ -114,7 +114,7 @@ Important settings include:
 - Runtime cache storage and retention.
 - Rate limits and quotas.
 - Max request size and max text length.
-- Queue bundles and audio attachment field.
+- Queue bundles and audio attachment field. Queue-generated media is stored under `public://tts/` by default.
 - Generated audio replacement and manual audio overwrite protection.
 - Audio field setup for selected content types.
 - Existing content backfill through the settings form or Drush.
@@ -127,6 +127,8 @@ See [Global settings](docs/installation.md#global-settings) for the full setting
 After installing HearMe on a site that already has content, use **Queue existing content** on the settings page to add background audio-generation jobs for configured content types. If Drush is installed, the same backfill is available with `drush hear-me:queue-existing`.
 
 By default, regenerated queue audio can replace existing HearMe-generated media so attached audio stays current after content changes. Manually selected or unknown audio is protected by default and is not overwritten unless **Overwrite manually selected audio** is enabled.
+
+Queue-generated entity audio is stored under `public://tts/` as Drupal Media/File entities. The private runtime cache setting applies only to `/hear-me/tts` click-triggered playback, not generated media attached to content. The UI requires explicit confirmation before backfilling unpublished content because generated audio may become publicly reachable by file URL.
 
 ## Documentation
 
@@ -166,7 +168,9 @@ $databases['default']['default'] = [
 
 The `/hear-me/tts` endpoint requires the **Use TTS playback** permission (`use tts playback`) and a valid CSRF request header token.
 
-Runtime responses from `/hear-me/tts` are sent with `Cache-Control: private, no-store, max-age=0, must-revalidate` so browsers and intermediaries do not store click-generated audio responses. Generated media files attached to content use normal Drupal file/media handling.
+Runtime responses from `/hear-me/tts` are sent with `Cache-Control: private, no-store, max-age=0, must-revalidate` so browsers and intermediaries do not store click-generated audio responses. Generated media files attached to content use normal Drupal file/media handling and are stored under `public://tts/` by default.
+
+Do not queue unpublished, access-restricted, or sensitive content unless the generated audio is safe to expose as a public file.
 
 Grant **Use TTS playback** to Anonymous users only after reviewing rate limits, quotas, provider capacity, and whether generated runtime audio may contain private or user-selected text.
 

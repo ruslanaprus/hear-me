@@ -135,6 +135,8 @@ The command uses the configured queue bundles by default. A `--bundles` value ca
 | **Administer HearMe** | `administer hear me` | Access to **Administration > Configuration > Media > HearMe TTS**, including provider settings, cache settings, rate limits, queue setup, setup status checks, and setup actions. |
 | **Use TTS playback** | `use tts playback` | Access to the `/hear-me/tts` synthesis endpoint. The endpoint also requires a valid CSRF request header token. |
 
+Runtime responses from `/hear-me/tts` include `Cache-Control: private, no-store, max-age=0, must-revalidate`, `Pragma: no-cache`, and `Expires: 0`. These headers protect click-generated audio responses and do not change caching for generated Media/File entities attached to content.
+
 Both permissions are restricted. Each playback request can call an external TTS service and consume CPU, memory, network, and disk cache resources. Grant **Use TTS playback** to Anonymous users only after rate limits, quotas, and cache privacy are reviewed.
 
 Grant **Administer HearMe** to trusted site builders who should manage HearMe without receiving the broad **Administer site configuration** permission.

@@ -35,13 +35,13 @@ class HearMeController extends ControllerBase {
   public function synthesize(Request $request): Response {
     $validation = $this->inputValidator->validateRequestBody($request->getContent());
     if (!$validation->isValid()) {
-      return new Response($validation->errorMessage, 400);
+      return $this->noStoreResponse($validation->errorMessage, 400);
     }
 
     $providerKey = $this->ttsService->getProviderKey();
     $rateLimitError = $this->rateLimiter->check($providerKey);
     if ($rateLimitError !== NULL) {
-      return new Response($rateLimitError, 429);
+      return $this->noStoreResponse($rateLimitError, 429);
     }
 
     $this->rateLimiter->register($providerKey);
@@ -54,15 +54,23 @@ class HearMeController extends ControllerBase {
     );
     $audio = $this->ttsService->getAudio($validation->text, $validation->lang, $source);
     if ($audio === NULL) {
-      return new Response('Synthesis failed', 500);
+      return $this->noStoreResponse('Synthesis failed', 500);
     }
 
-    $response = new Response($audio->bytes);
+    $response = $this->noStoreResponse($audio->bytes);
     $response->headers->set('Content-Type', $audio->mimeType);
     $response->headers->set('Content-Disposition', 'inline; filename="tts.' . $audio->extension . '"');
     $response->headers->set('Content-Length', (string) strlen($audio->bytes));
     $response->headers->set('X-Content-Type-Options', 'nosniff');
 
+    return $response;
+  }
+
+  protected function noStoreResponse(string $content, int $status = 200): Response {
+    $response = new Response($content, $status);
+    $response->headers->set('Cache-Control', 'private, no-store, max-age=0, must-revalidate');
+    $response->headers->set('Pragma', 'no-cache');
+    $response->headers->set('Expires', '0');
     return $response;
   }
 

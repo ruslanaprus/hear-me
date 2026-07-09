@@ -163,6 +163,8 @@ $databases['default']['default'] = [
 
 The `/hear-me/tts` endpoint requires the **Use TTS playback** permission (`use tts playback`) and a valid CSRF request header token.
 
+Runtime responses from `/hear-me/tts` are sent with `Cache-Control: private, no-store, max-age=0, must-revalidate` so browsers and intermediaries do not store click-generated audio responses. Generated media files attached to content use normal Drupal file/media handling.
+
 Grant **Use TTS playback** to Anonymous users only after reviewing rate limits, quotas, provider capacity, and whether generated runtime audio may contain private or user-selected text.
 
 Grant **Administer HearMe** (`administer hear me`) to trusted site builders who should configure providers, cache storage, rate limits, queue settings, setup checks, and generated audio field setup without receiving the broad **Administer site configuration** permission.

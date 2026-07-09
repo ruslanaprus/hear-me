@@ -12,7 +12,6 @@ use Drupal\Core\Session\AccountInterface;
 use Drupal\Core\State\StateInterface;
 use Drupal\Core\StreamWrapper\StreamWrapperManagerInterface;
 use Drupal\Core\StringTranslation\StringTranslationTrait;
-use Drupal\field\Entity\FieldConfig;
 
 /**
  * Builds setup readiness checks for the HearMe settings form.
@@ -33,6 +32,7 @@ class HearMeSetupStatus {
     protected DateFormatterInterface $dateFormatter,
     protected TimeInterface $time,
     protected HearMeService $ttsService,
+    protected HearMeAudioFieldValidator $audioFieldValidator,
   ) {}
 
   /**
@@ -139,26 +139,22 @@ class HearMeSetupStatus {
     $config = $this->configFactory->get('hear_me.settings');
     $fieldName = (string) ($config->get('tts_audio_field') ?? 'field_tts_audio');
     $queueBundles = array_values(array_filter($config->get('queue_bundles') ?? []));
+    $overwriteManual = (bool) ($config->get('overwrite_manual_audio') ?? FALSE);
 
     if (!$queueBundles) {
       return $this->item('audio_field', $this->t('Audio field configured'), 'info', $this->t('Not required'), $this->t('No content types are selected for queue pre-generation.'));
     }
 
-    $missing = [];
-    foreach ($queueBundles as $bundle) {
-      if (!FieldConfig::loadByName('node', $bundle, $fieldName)) {
-        $missing[] = $bundle;
-      }
+    $summary = $this->audioFieldValidator->validateBundles($queueBundles, $fieldName, !$overwriteManual);
+    if ($summary['errors']) {
+      return $this->item('audio_field', $this->t('Audio field configured'), 'error', $this->t('Failed'), $this->formatValidationMessages($summary['errors']));
     }
 
-    if (!$missing) {
-      return $this->item('audio_field', $this->t('Audio field configured'), 'ok', $this->t('OK'), $this->t('@field exists on all queued content types.', ['@field' => $fieldName]));
+    if ($summary['warnings']) {
+      return $this->item('audio_field', $this->t('Audio field configured'), 'warning', $this->t('Warning'), $this->formatValidationMessages($summary['warnings']));
     }
 
-    return $this->item('audio_field', $this->t('Audio field configured'), 'error', $this->t('Missing'), $this->t('@field is missing on: @bundles.', [
-      '@field' => $fieldName,
-      '@bundles' => implode(', ', $missing),
-    ]));
+    return $this->item('audio_field', $this->t('Audio field configured'), 'ok', $this->t('OK'), $this->t('@field is compatible on all queued content types.', ['@field' => $fieldName]));
   }
 
   protected function getPublicDirectoryStatus(): array {
@@ -261,6 +257,10 @@ class HearMeSetupStatus {
       'status' => $status,
       'message' => $message,
     ];
+  }
+
+  protected function formatValidationMessages(array $messages): string {
+    return implode(' ', array_map(static fn($message) => (string) $message, $messages));
   }
 
 }

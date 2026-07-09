@@ -13,6 +13,7 @@ use Drupal\Core\Session\AccountInterface;
 use Drupal\field\Entity\FieldConfig;
 use Drupal\field\Entity\FieldStorageConfig;
 use Drupal\hear_me\Plugin\TtsProvider\TtsProviderConfigurableInterface;
+use Drupal\hear_me\Service\HearMeAudioFieldValidator;
 use Drupal\hear_me\Service\HearMeExistingContentQueue;
 use Drupal\hear_me\Service\HearMeService;
 use Drupal\hear_me\Service\HearMeInputValidator;
@@ -37,6 +38,8 @@ class HearMeSettingsForm extends ConfigFormBase {
 
   protected HearMeExistingContentQueue $existingContentQueue;
 
+  protected HearMeAudioFieldValidator $audioFieldValidator;
+
   public function __construct(
     ConfigFactoryInterface $configFactory,
     TypedConfigManagerInterface $typedConfigManager,
@@ -45,6 +48,7 @@ class HearMeSettingsForm extends ConfigFormBase {
     TtsCacheManager $cacheManager,
     HearMeSetupStatus $setupStatus,
     HearMeExistingContentQueue $existingContentQueue,
+    HearMeAudioFieldValidator $audioFieldValidator,
   ) {
     parent::__construct($configFactory, $typedConfigManager);
     $this->ttsService        = $ttsService;
@@ -52,6 +56,7 @@ class HearMeSettingsForm extends ConfigFormBase {
     $this->cacheManager      = $cacheManager;
     $this->setupStatus       = $setupStatus;
     $this->existingContentQueue = $existingContentQueue;
+    $this->audioFieldValidator = $audioFieldValidator;
   }
 
   public static function create(ContainerInterface $container): static {
@@ -63,6 +68,7 @@ class HearMeSettingsForm extends ConfigFormBase {
       $container->get('hear_me.cache_manager'),
       $container->get('hear_me.setup_status'),
       $container->get('hear_me.existing_content_queue'),
+      $container->get('hear_me.audio_field_validator'),
     );
   }
 
@@ -475,7 +481,22 @@ class HearMeSettingsForm extends ConfigFormBase {
       ]));
     }
 
-    $this->validateAudioFieldName((string) $form_state->getValue('tts_audio_field'), 'tts_audio_field', $form_state);
+    $fieldName = (string) $form_state->getValue('tts_audio_field');
+    $this->validateAudioFieldName($fieldName, 'tts_audio_field', $form_state);
+
+    $queueBundles = array_values(array_filter($form_state->getValue('queue_bundles') ?? []));
+    if ($queueBundles) {
+      $summary = $this->audioFieldValidator->validateBundles(
+        $queueBundles,
+        $fieldName,
+        !$form_state->getValue('overwrite_manual_audio'),
+      );
+      if ($summary['errors']) {
+        $form_state->setErrorByName('queue_bundles', $this->t('The configured TTS audio field is not compatible with every selected content type: @messages', [
+          '@messages' => $this->formatValidationMessages($summary['errors']),
+        ]));
+      }
+    }
   }
 
   public function validateAudioFieldSetup(array &$form, FormStateInterface $form_state): void {
@@ -491,9 +512,21 @@ class HearMeSettingsForm extends ConfigFormBase {
     }
 
     $fieldName = (string) $form_state->getValue('tts_audio_field');
-    $storage = FieldStorageConfig::loadByName('node', $fieldName);
-    if ($storage && !$this->isCompatibleAudioFieldStorage($storage)) {
-      $form_state->setErrorByName('tts_audio_field', $this->t('The field @field already exists on content and is not a media reference field. Choose a different field machine name.', ['@field' => $fieldName]));
+    $storageSummary = $this->audioFieldValidator->validateStorage($fieldName);
+    if ($storageSummary['errors']) {
+      $form_state->setErrorByName('tts_audio_field', $this->t('The existing field storage is not compatible with HearMe audio: @messages', [
+        '@messages' => $this->formatValidationMessages($storageSummary['errors']),
+      ]));
+    }
+
+    $existingBundles = array_values(array_filter($bundles, static fn($bundle) => FieldConfig::loadByName('node', $bundle, $fieldName)));
+    if ($existingBundles) {
+      $summary = $this->audioFieldValidator->validateBundles($existingBundles, $fieldName);
+      if ($summary['errors']) {
+        $form_state->setErrorByName('audio_field_setup][bundles', $this->t('One or more existing fields are not compatible with HearMe audio: @messages', [
+          '@messages' => $this->formatValidationMessages($summary['errors']),
+        ]));
+      }
     }
   }
 
@@ -507,8 +540,15 @@ class HearMeSettingsForm extends ConfigFormBase {
     }
 
     $fieldName = (string) $form_state->getValue('tts_audio_field');
-    if (!$this->existingContentQueue->getBundlesWithAudioField($bundles, $fieldName)) {
-      $form_state->setErrorByName('existing_content_queue', $this->t('Create the configured HearMe audio field on at least one selected content type before queueing existing content.'));
+    $summary = $this->audioFieldValidator->validateBundles(
+      $bundles,
+      $fieldName,
+      !$this->config('hear_me.settings')->get('overwrite_manual_audio'),
+    );
+    if ($summary['errors']) {
+      $form_state->setErrorByName('existing_content_queue', $this->t('The configured TTS audio field is not compatible with every selected content type: @messages', [
+        '@messages' => $this->formatValidationMessages($summary['errors']),
+      ]));
     }
   }
 
@@ -550,6 +590,15 @@ class HearMeSettingsForm extends ConfigFormBase {
 
     if (isset($providers[$providerKey]) && $providers[$providerKey] instanceof TtsProviderConfigurableInterface) {
       $providers[$providerKey]->submitConfigForm($form, $form_state);
+    }
+
+    $summary = $this->audioFieldValidator->validateBundles(
+      $queueBundles,
+      (string) $form_state->getValue('tts_audio_field'),
+      !$form_state->getValue('overwrite_manual_audio'),
+    );
+    foreach ($summary['warnings'] as $warning) {
+      $this->messenger()->addWarning($warning);
     }
 
     parent::submitForm($form, $form_state);
@@ -743,7 +792,7 @@ class HearMeSettingsForm extends ConfigFormBase {
       + (int) ($results['skipped_unsupported_language'] ?? 0)
       + (int) ($results['skipped_not_loaded'] ?? 0);
     if ($skipped > 0) {
-      \Drupal::messenger()->addWarning(\Drupal::translation()->translate('Skipped @skipped node(s): @existing already had audio, @field missing the audio field, @empty had no source text, @unsupported used an unsupported language, @missing could not be loaded.', [
+      \Drupal::messenger()->addWarning(\Drupal::translation()->translate('Skipped @skipped node(s): @existing already had audio, @field missing or incompatible audio field, @empty had no source text, @unsupported used an unsupported language, @missing could not be loaded.', [
         '@skipped' => $skipped,
         '@existing' => (int) ($results['skipped_existing_audio'] ?? 0),
         '@field' => (int) ($results['skipped_field_missing'] ?? 0),
@@ -834,11 +883,6 @@ class HearMeSettingsForm extends ConfigFormBase {
     }
   }
 
-  protected function isCompatibleAudioFieldStorage(FieldStorageConfig $storage): bool {
-    return $storage->getType() === 'entity_reference'
-      && ($storage->getSetting('target_type') === 'media');
-  }
-
   protected function configureAudioFieldDisplays(string $bundle, string $fieldName): void {
     $formDisplay = EntityFormDisplay::load('node.' . $bundle . '.default')
       ?: EntityFormDisplay::create([
@@ -875,6 +919,10 @@ class HearMeSettingsForm extends ConfigFormBase {
         '#markup' => $message,
       ],
     ];
+  }
+
+  protected function formatValidationMessages(array $messages): string {
+    return implode(' ', array_map(static fn($message) => (string) $message, $messages));
   }
 
 }

@@ -113,9 +113,9 @@ By default, HearMe uses private files. Configure `file_private_path` or switch *
 
 ## Existing Content Was Not Queued
 
-The backfill action only scans content types selected under **Queue TTS pre-generation for content types**. It skips nodes when the configured TTS audio field is missing, the field already has audio and missing-only mode is used, the node has no source text, or the resolved language is not supported by the active provider.
+The backfill action only scans content types selected under **Queue TTS pre-generation for content types**. It skips nodes when the configured TTS audio field is missing or incompatible, the field already has audio and missing-only mode is used, the node has no source text, or the resolved language is not supported by the active provider.
 
-Use **Create HearMe audio field** first, then run **Queue existing content** again. With Drush installed, use `drush hear-me:queue-existing --requeue-existing` when existing attached audio should be regenerated.
+Use **Create HearMe audio field** first, then run **Queue existing content** again. If you use an existing field, confirm that it is an entity reference to media and allows the `hear_me_audio` bundle. With Drush installed, use `drush hear-me:queue-existing --requeue-existing` when existing attached audio should be regenerated.
 
 ## Generated Files Are Public
 

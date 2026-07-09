@@ -101,6 +101,19 @@ The default Piper-compatible endpoint is intentionally empty in release installs
 | **Create HearMe audio field** | Creates the configured media reference field on selected content types, restricted to the HearMe Audio media type. Existing fields are skipped. |
 | **Queue existing content** | Adds queue jobs for existing nodes in configured queue bundles. Audio is generated later by cron or queue workers. |
 
+## Audio Field Compatibility
+
+If you enter an existing field machine name instead of using **Create HearMe audio field**, the field must be compatible on every content type selected under **Queue TTS pre-generation for content types**:
+
+- The field must exist on every selected content type.
+- The field storage type must be `entity_reference`.
+- The field storage target entity type must be `media`.
+- The field must allow the `hear_me_audio` media bundle, or have no target bundle restriction.
+- The field storage cardinality must allow at least one value.
+- Locked field storage is reported as a warning in setup status.
+
+If **Overwrite manually selected audio** is disabled and selected content types already have values in the configured audio field, HearMe warns that existing manual or unknown values will be skipped.
+
 ## Backfill Existing Content
 
 When installing HearMe on a site that already has content, create the configured audio field first, then use **Queue existing content** from the settings page.

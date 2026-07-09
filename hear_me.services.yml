@@ -40,15 +40,21 @@ services:
       - '@queue'
       - '@logger.factory'
 
+  # Shared validator for node audio fields used by queue generation.
+  hear_me.audio_field_validator:
+    class: Drupal\hear_me\Service\HearMeAudioFieldValidator
+    arguments:
+      - '@entity_type.manager'
+
   # Existing node backfill queue manager
   hear_me.existing_content_queue:
     class: Drupal\hear_me\Service\HearMeExistingContentQueue
     arguments:
       - '@config.factory'
       - '@entity_type.manager'
-      - '@entity_field.manager'
       - '@hear_me.node_audio_queue'
       - '@hear_me.service'
+      - '@hear_me.audio_field_validator'
 
   # Installation and runtime readiness checks for the admin settings form
   hear_me.setup_status:
@@ -63,6 +69,7 @@ services:
       - '@date.formatter'
       - '@datetime.time'
       - '@hear_me.service'
+      - '@hear_me.audio_field_validator'
 
   # Central orchestrator service
   hear_me.service:

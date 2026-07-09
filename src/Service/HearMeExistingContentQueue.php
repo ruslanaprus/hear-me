@@ -3,7 +3,6 @@
 namespace Drupal\hear_me\Service;
 
 use Drupal\Core\Config\ConfigFactoryInterface;
-use Drupal\Core\Entity\EntityFieldManagerInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\node\NodeInterface;
 
@@ -27,9 +26,9 @@ class HearMeExistingContentQueue {
   public function __construct(
     protected ConfigFactoryInterface $configFactory,
     protected EntityTypeManagerInterface $entityTypeManager,
-    protected EntityFieldManagerInterface $entityFieldManager,
     protected HearMeNodeAudioQueue $nodeAudioQueue,
     protected HearMeService $ttsService,
+    protected HearMeAudioFieldValidator $audioFieldValidator,
   ) {}
 
   /**
@@ -87,13 +86,7 @@ class HearMeExistingContentQueue {
    */
   public function hasCompatibleAudioField(string $bundle, ?string $fieldName = NULL): bool {
     $fieldName ??= $this->getAudioFieldName();
-    $definitions = $this->entityFieldManager->getFieldDefinitions('node', $bundle);
-    if (!isset($definitions[$fieldName])) {
-      return FALSE;
-    }
-
-    return $definitions[$fieldName]->getType() === 'entity_reference'
-      && $definitions[$fieldName]->getSetting('target_type') === 'media';
+    return $this->audioFieldValidator->isBundleCompatible($bundle, $fieldName);
   }
 
   /**
@@ -108,10 +101,7 @@ class HearMeExistingContentQueue {
    *   Bundle machine names.
    */
   public function getBundlesWithAudioField(array $bundles, ?string $fieldName = NULL): array {
-    return array_values(array_filter(
-      $this->normalizeBundles($bundles),
-      fn(string $bundle) => $this->hasCompatibleAudioField($bundle, $fieldName),
-    ));
+    return $this->audioFieldValidator->getCompatibleBundles($this->normalizeBundles($bundles), $fieldName ?? $this->getAudioFieldName());
   }
 
   /**
@@ -121,7 +111,7 @@ class HearMeExistingContentQueue {
    *   Optional configured bundle filter.
    */
   public function countCandidateNodes(array $bundles = [], bool $publishedOnly = TRUE): int {
-    $bundles = $this->filterConfiguredBundles($bundles);
+    $bundles = $this->getBundlesWithAudioField($this->filterConfiguredBundles($bundles));
     if (!$bundles) {
       return 0;
     }
@@ -159,7 +149,7 @@ class HearMeExistingContentQueue {
     int $batchSize = self::DEFAULT_BATCH_SIZE,
   ): array {
     $stats = $this->emptyStats();
-    $bundles = $this->filterConfiguredBundles($bundles);
+    $bundles = $this->getBundlesWithAudioField($this->filterConfiguredBundles($bundles));
     if (!$bundles) {
       return [
         'stats' => $stats,
@@ -292,7 +282,7 @@ class HearMeExistingContentQueue {
   protected function queueNode(NodeInterface $node, bool $missingOnly): array {
     $stats = $this->emptyStats();
     $fieldName = $this->getAudioFieldName();
-    if (!$node->hasField($fieldName)) {
+    if (!$this->hasCompatibleAudioField($node->bundle(), $fieldName)) {
       $stats['skipped_field_missing']++;
       return $stats;
     }

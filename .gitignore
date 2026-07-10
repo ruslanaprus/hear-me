@@ -41,7 +41,6 @@ composer.lock
 # -----------------------------
 .env
 .env.*
-!.env.example
 
 # -----------------------------
 # Logs & databases

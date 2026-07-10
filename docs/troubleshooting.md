@@ -85,21 +85,15 @@ Check the browser console and network tab first. Then check Drupal logs.
 
 Common causes:
 
-- Piper-compatible endpoint URL is not reachable from the Drupal server/container.
+- Piper-compatible endpoint URL is not reachable from the Drupal server.
 - Piper does not have a voice for the requested language.
 - The response is not an audio response.
 - Private files are not configured and runtime caching is expected to persist files.
 - Provider timeout or backend process failure.
 
-## Piper-Compatible Service Works From The Host But Not From Drupal
+## Piper-Compatible Service Works From A Browser But Not From Drupal
 
-In Docker, `localhost` means the current container. If Drupal and Piper are separate services, Drupal usually needs the Compose service name:
-
-```text
-http://piper-service:5000/tts
-```
-
-Verify from inside the Drupal container or server, not from your host browser.
+The endpoint must be reachable from the Drupal server process, not only from your workstation or browser. Verify connectivity from the same server environment that runs PHP, then configure HearMe with that reachable URL.
 
 ## Runtime Cache Does Not Persist
 

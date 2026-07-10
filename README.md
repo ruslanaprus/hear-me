@@ -157,21 +157,13 @@ From this module directory:
 composer install
 composer validate --strict
 vendor/bin/phpcs
-SIMPLETEST_BASE_URL=http://localhost:8080 \
-SIMPLETEST_DB=mysql://drupal:drupal@127.0.0.1:3306/drupal \
+SIMPLETEST_BASE_URL=<drupal-base-url> \
+SIMPLETEST_DB=<database-url> \
 BROWSERTEST_OUTPUT_DIRECTORY=/tmp/browser_output \
 php tests/phpunit.php -c phpunit.xml.dist
 ```
 
-If PHPUnit runs inside a Docker container, set `SIMPLETEST_BASE_URL` and `SIMPLETEST_DB` from that container's point of view. For this repository's local Compose stack, the command is:
-
-```bash
-docker compose exec -T -w /var/www/html/modules/custom/hear_me \
-  -e SIMPLETEST_BASE_URL=http://localhost \
-  -e SIMPLETEST_DB=mysql://drupal:drupal@db/drupal \
-  -e BROWSERTEST_OUTPUT_DIRECTORY=/tmp/browser_output \
-  drupal php tests/phpunit.php -c phpunit.xml.dist
-```
+Set `SIMPLETEST_BASE_URL` and `SIMPLETEST_DB` to addresses reachable from the PHP process running PHPUnit. A MySQL URL has the form `mysql://user:password@host/database`.
 
 The PHPUnit suite covers install/uninstall defaults, config schema, queue worker discovery, settings form saves and endpoint validation, `/hear-me/tts` permission/CSRF access, no-store runtime response headers, audio field auto-creation, stale queue item skipping, existing-content backfill queueing, and manual audio overwrite protection.
 

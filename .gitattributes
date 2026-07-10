@@ -3,7 +3,7 @@
 /.gitignore export-ignore
 /.env export-ignore
 /.env.* export-ignore
-/.github export-ignore
+/.github/** export-ignore
 /.idea export-ignore
 /.phpunit.cache export-ignore
 /composer.lock export-ignore

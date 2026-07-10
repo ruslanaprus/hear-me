@@ -23,6 +23,9 @@
     "require-dev": {
         "drupal/core-dev": "^11"
     },
+    "suggest": {
+        "drush/drush": "Enables optional HearMe Drush commands, including queueing existing content from the command line."
+    },
     "config": {
         "allow-plugins": {
             "composer/installers": true,

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ruleset name="HearMe">
+  <description>Drupal coding standards for the HearMe module.</description>
+
+  <file>.</file>
+
+  <arg name="extensions" value="php,module,install,inc,yml"/>
+  <arg value="s"/>
+  <arg value="-colors"/>
+  <arg name="report-width" value="120"/>
+
+  <config name="drupal_core_version" value="11"/>
+
+  <rule ref="vendor/drupal/coder/coder_sniffer/Drupal"/>
+  <rule ref="vendor/drupal/coder/coder_sniffer/DrupalPractice"/>
+
+  <exclude-pattern>vendor/*</exclude-pattern>
+  <exclude-pattern>.github/*</exclude-pattern>
+  <exclude-pattern>.git/*</exclude-pattern>
+  <exclude-pattern>*.patch</exclude-pattern>
+
+  <!-- Baseline existing style debt so CI can start enforcing Drupal Coder. -->
+  <rule ref="Drupal.Arrays.Array.LongLineDeclaration"><severity>0</severity></rule>
+  <rule ref="Drupal.Classes.FullyQualifiedNamespace.UseStatementMissing"><severity>0</severity></rule>
+  <rule ref="Drupal.Commenting.ClassComment.Missing"><severity>0</severity></rule>
+  <rule ref="Drupal.Commenting.DocCommentAlignment.SpaceBeforeStar"><severity>0</severity></rule>
+  <rule ref="Drupal.Commenting.FileComment.Missing"><severity>0</severity></rule>
+  <rule ref="Drupal.Commenting.FunctionComment.Missing"><severity>0</severity></rule>
+  <rule ref="Drupal.Commenting.FunctionComment.MissingReturnComment"><severity>0</severity></rule>
+  <rule ref="Drupal.Commenting.FunctionComment.ParamMissingDefinition"><severity>0</severity></rule>
+  <rule ref="Drupal.Commenting.FunctionComment.ReturnCommentIndentation"><severity>0</severity></rule>
+  <rule ref="Drupal.Commenting.VariableComment.Missing"><severity>0</severity></rule>
+  <rule ref="Drupal.Files.LineLength.TooLong"><severity>0</severity></rule>
+  <rule ref="Drupal.Formatting.MultipleStatementAlignment.NotSame"><severity>0</severity></rule>
+  <rule ref="Drupal.Functions.MultiLineFunctionDeclaration.CloseBracketLine"><severity>0</severity></rule>
+  <rule ref="Drupal.Functions.MultiLineFunctionDeclaration.FirstParamSpacing"><severity>0</severity></rule>
+  <rule ref="Drupal.Functions.MultiLineFunctionDeclaration.MissingTrailingComma"><severity>0</severity></rule>
+  <rule ref="Drupal.Semantics.FunctionT.Concat"><severity>0</severity></rule>
+  <rule ref="Drupal.Semantics.FunctionT.WhiteSpace"><severity>0</severity></rule>
+  <rule ref="Drupal.WhiteSpace.Comma.TooManySpaces"><severity>0</severity></rule>
+  <rule ref="DrupalPractice.Objects.GlobalClass.GlobalClass"><severity>0</severity></rule>
+  <rule ref="Generic.Functions.FunctionCallArgumentSpacing.TooMuchSpaceAfterComma"><severity>0</severity></rule>
+  <rule ref="Squiz.Arrays.ArrayDeclaration.CloseBraceNewLine"><severity>0</severity></rule>
+</ruleset>

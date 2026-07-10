@@ -1,0 +1,90 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  php:
+    name: PHP 8.3 / Drupal 11
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: drupal
+          MYSQL_USER: drupal
+          MYSQL_PASSWORD: drupal
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: curl, dom, fileinfo, gd, mbstring, pdo_mysql, simplexml, xml, zip
+          coverage: none
+          tools: composer:v2
+
+      - name: Create Drupal project
+        run: composer create-project drupal/recommended-project:^11 drupal --no-interaction --no-progress
+
+      - name: Check out HearMe
+        uses: actions/checkout@v4
+        with:
+          path: drupal/web/modules/custom/hear_me
+
+      - name: Validate Composer metadata
+        working-directory: drupal/web/modules/custom/hear_me
+        run: composer validate --strict
+
+      - name: Install module development dependencies
+        working-directory: drupal/web/modules/custom/hear_me
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Run PHPCS
+        working-directory: drupal/web/modules/custom/hear_me
+        run: vendor/bin/phpcs
+
+      - name: Start Drupal web server
+        working-directory: drupal
+        run: |
+          php -S 127.0.0.1:8888 -t web web/.ht.router.php > "$RUNNER_TEMP/php-server.log" 2>&1 &
+          for i in {1..30}; do
+            php -r '$socket = @fsockopen("127.0.0.1", 8888); if ($socket) { fclose($socket); exit(0); } exit(1);' && exit 0
+            sleep 1
+          done
+          exit 1
+
+      - name: Run PHPUnit
+        working-directory: drupal/web/modules/custom/hear_me
+        env:
+          SIMPLETEST_BASE_URL: http://127.0.0.1:8888
+          SIMPLETEST_DB: mysql://drupal:drupal@127.0.0.1:3306/drupal
+          BROWSERTEST_OUTPUT_DIRECTORY: ${{ runner.temp }}/browser_output
+        run: |
+          mkdir -p "$BROWSERTEST_OUTPUT_DIRECTORY"
+          php tests/phpunit.php -c phpunit.xml.dist
+
+      - name: Upload browser test output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-test-output
+          path: |
+            ${{ runner.temp }}/browser_output
+            ${{ runner.temp }}/php-server.log

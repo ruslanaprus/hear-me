@@ -6,7 +6,7 @@
     "homepage": "https://www.drupal.org/project/hear_me",
     "support": {
         "issues": "https://www.drupal.org/project/issues/hear_me",
-        "source": "https://git.drupalcode.org/project/hear_me",
+        "source": "https://github.com/ruslanaprus/hear-me",
         "docs": "https://www.drupal.org/project/hear_me"
     },
     "keywords": [
@@ -22,6 +22,19 @@
     },
     "require-dev": {
         "drupal/core-dev": "^11"
+    },
+    "config": {
+        "allow-plugins": {
+            "composer/installers": true,
+            "dealerdirect/phpcodesniffer-composer-installer": true,
+            "drupal/core-composer-scaffold": true,
+            "drupal/core-project-message": true,
+            "drupal/core-recipe-unpack": true,
+            "php-http/discovery": true,
+            "php-tuf/composer-integration": true,
+            "phpstan/extension-installer": true,
+            "symfony/runtime": true
+        }
     },
     "autoload": {
         "psr-4": {

@@ -2,6 +2,7 @@
 # Composer dependencies
 # -----------------------------
 /vendor/
+composer.lock
 /web/core/
 /web/vendor/
 
@@ -25,6 +26,7 @@
 /web/sites/*/cache/
 
 # PHPUnit / testing
+.phpunit.cache/
 /web/sites/simpletest/
 
 # -----------------------------

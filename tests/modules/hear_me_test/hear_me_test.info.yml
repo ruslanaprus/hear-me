@@ -1,0 +1,8 @@
+name: 'HearMe Test Provider'
+type: module
+description: 'Provides a deterministic TTS provider for HearMe tests.'
+package: Testing
+core_version_requirement: ^11
+hidden: true
+dependencies:
+  - hear_me:hear_me

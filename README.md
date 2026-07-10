@@ -138,6 +138,45 @@ Queue-generated entity audio is stored under `public://tts/` as Drupal Media/Fil
 - [Troubleshooting](docs/troubleshooting.md)
 - [Changelog](CHANGELOG.md)
 
+## Development, Tests, And CI
+
+The module uses GitHub Actions (`.github/workflows/tests.yml`) plus local PHPCS and PHPUnit configuration. The workflow is the executable reference for a clean test environment: it creates a fresh Drupal 11 project, checks this module out under `web/modules/custom/hear_me`, starts MySQL and a PHP web server, then runs Composer validation, PHPCS, and PHPUnit.
+
+Test requirements:
+
+- PHP 8.3 or newer with Drupal-required extensions, including `pdo_mysql`, `gd`, `mbstring`, `xml`, and `zip`.
+- Composer 2.
+- A Drupal 11 codebase with this module located under `web/modules/custom/hear_me` or `web/modules/contrib/hear_me`.
+- Module development dependencies installed with `composer install` from this module directory. These provide PHPUnit, Drupal core-dev, and Drupal Coder for local checks. Do not commit or package `vendor/`.
+- A MySQL/MariaDB database reachable from the PHP process. Kernel and functional tests create isolated Simpletest tables using the `SIMPLETEST_DB` connection string.
+- An HTTP server serving the Drupal `web/` directory. Functional tests use `SIMPLETEST_BASE_URL` to make real HTTP requests against temporary BrowserTestBase sites.
+
+From this module directory:
+
+```bash
+composer install
+composer validate --strict
+vendor/bin/phpcs
+SIMPLETEST_BASE_URL=http://localhost:8080 \
+SIMPLETEST_DB=mysql://drupal:drupal@127.0.0.1:3306/drupal \
+BROWSERTEST_OUTPUT_DIRECTORY=/tmp/browser_output \
+php tests/phpunit.php -c phpunit.xml.dist
+```
+
+If PHPUnit runs inside a Docker container, set `SIMPLETEST_BASE_URL` and `SIMPLETEST_DB` from that container's point of view. For this repository's local Compose stack, the command is:
+
+```bash
+docker compose exec -T -w /var/www/html/modules/custom/hear_me \
+  -e SIMPLETEST_BASE_URL=http://localhost \
+  -e SIMPLETEST_DB=mysql://drupal:drupal@db/drupal \
+  -e BROWSERTEST_OUTPUT_DIRECTORY=/tmp/browser_output \
+  drupal php tests/phpunit.php -c phpunit.xml.dist
+```
+
+The PHPUnit suite covers install/uninstall defaults, config schema, queue worker discovery, settings form saves and endpoint validation, `/hear-me/tts` permission/CSRF access, no-store runtime response headers, audio field auto-creation, stale queue item skipping, existing-content backfill queueing, and manual audio overwrite protection.
+
+The suite is expected to run without external services because `tests/modules/hear_me_test` registers a deterministic TTS provider that returns fixed WAV-like test data. Browser tests install temporary Drupal sites under Simpletest database prefixes and do not depend on the existing site configuration. The test bootstrap always loads Drupal from the host project and filters nested module-local `vendor/drupal/core` paths, so test execution uses the same Drupal core that installed the module.
+
 ## Provider System
 
 Providers are Drupal services tagged with `hear_me.provider`. Custom modules can register additional providers without changing HearMe code.

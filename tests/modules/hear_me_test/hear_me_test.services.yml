@@ -1,0 +1,5 @@
+services:
+  hear_me_test.provider:
+    class: Drupal\hear_me_test\Plugin\TtsProvider\TestProvider
+    tags:
+      - { name: hear_me.provider, provider_key: test }

@@ -16,6 +16,7 @@ class HearMeExistingContentQueue {
   protected const STAT_KEYS = [
     'scanned',
     'queued',
+    'skipped_duplicate_queue',
     'skipped_existing_audio',
     'skipped_field_missing',
     'skipped_source_empty',
@@ -308,8 +309,13 @@ class HearMeExistingContentQueue {
       return $stats;
     }
 
-    $this->nodeAudioQueue->queueItem($queueItem);
-    $stats['queued']++;
+    if ($this->nodeAudioQueue->queueItem($queueItem)) {
+      $stats['queued']++;
+    }
+    else {
+      $stats['skipped_duplicate_queue']++;
+    }
+
     return $stats;
   }
 

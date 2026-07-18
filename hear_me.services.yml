@@ -38,6 +38,8 @@ services:
       - '@config.factory'
       - '@entity_type.manager'
       - '@queue'
+      - '@state'
+      - '@lock'
       - '@logger.factory'
 
   # Shared validator for node audio fields used by queue generation.

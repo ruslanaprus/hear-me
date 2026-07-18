@@ -165,7 +165,7 @@ php tests/phpunit.php -c phpunit.xml.dist
 
 Set `SIMPLETEST_BASE_URL` and `SIMPLETEST_DB` to addresses reachable from the PHP process running PHPUnit. A MySQL URL has the form `mysql://user:password@host/database`.
 
-The PHPUnit suite covers install/uninstall defaults, config schema, queue worker discovery, settings form saves and endpoint validation, `/hear-me/tts` permission/CSRF access, no-store runtime response headers, audio field auto-creation, stale queue item skipping, existing-content backfill queueing, and manual audio overwrite protection.
+The PHPUnit suite covers install/uninstall defaults, config schema, queue worker discovery, settings form saves and endpoint validation, `/hear-me/tts` permission/CSRF access, no-store runtime response headers, audio field auto-creation, stale queue item skipping, existing-content backfill queueing and duplicate pending job skips, and manual audio overwrite protection.
 
 The suite is expected to run without external services because `tests/modules/hear_me_test` registers a deterministic TTS provider that returns fixed WAV-like test data. Browser tests install temporary Drupal sites under Simpletest database prefixes and do not depend on the existing site configuration. The test bootstrap always loads Drupal from the host project and filters nested module-local `vendor/drupal/core` paths, so test execution uses the same Drupal core that installed the module.
 

@@ -71,6 +71,9 @@ class HearMeQueueTest extends EntityKernelTestBase {
         'lang' => 'en',
         'content_hash' => str_repeat('a', 64),
       ]);
+    $node_audio_queue->expects($this->once())
+      ->method('clearQueuedHash')
+      ->with(1, str_repeat('b', 64));
 
     $worker = new HearMeQueueWorker([], 'hear_me_tts', [], $tts_service, $node_audio_queue);
     $worker->processItem([
@@ -114,6 +117,38 @@ class HearMeQueueTest extends EntityKernelTestBase {
     $this->assertSame('en', $item->data['lang']);
     $this->assertNotEmpty($item->data['content_hash']);
     $queue->deleteItem($item);
+  }
+
+  /**
+   * Tests existing-content backfill skips identical pending queue jobs.
+   */
+  public function testExistingContentBackfillSkipsPendingDuplicateHashes(): void {
+    $this->createContentType('article', 'Article');
+    $this->createAudioReferenceField('article');
+
+    $node = Node::create([
+      'type' => 'article',
+      'title' => 'Readable title',
+      'status' => 1,
+    ]);
+    $node->save();
+
+    $this->config('hear_me.settings')
+      ->set('queue_bundles', ['article'])
+      ->set('tts_audio_field', 'field_tts_audio')
+      ->save();
+
+    $queue = \Drupal::queue('hear_me_tts');
+    $backfill = $this->container->get('hear_me.existing_content_queue');
+
+    $first_stats = $backfill->queueAll(['article'], TRUE, TRUE);
+    $second_stats = $backfill->queueAll(['article'], TRUE, TRUE);
+
+    $this->assertSame(1, $first_stats['queued']);
+    $this->assertSame(0, $first_stats['skipped_duplicate_queue']);
+    $this->assertSame(0, $second_stats['queued']);
+    $this->assertSame(1, $second_stats['skipped_duplicate_queue']);
+    $this->assertSame(1, $queue->numberOfItems());
   }
 
   /**

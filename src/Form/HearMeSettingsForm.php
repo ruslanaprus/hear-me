@@ -896,13 +896,15 @@ class HearMeSettingsForm extends ConfigFormBase {
     ]));
 
     $skipped = (int) ($results['skipped_existing_audio'] ?? 0)
+      + (int) ($results['skipped_duplicate_queue'] ?? 0)
       + (int) ($results['skipped_field_missing'] ?? 0)
       + (int) ($results['skipped_source_empty'] ?? 0)
       + (int) ($results['skipped_unsupported_language'] ?? 0)
       + (int) ($results['skipped_not_loaded'] ?? 0);
     if ($skipped > 0) {
-      \Drupal::messenger()->addWarning(\Drupal::translation()->translate('Skipped @skipped node(s): @existing already had audio, @field missing or incompatible audio field, @empty had no source text, @unsupported used an unsupported language, @missing could not be loaded.', [
+      \Drupal::messenger()->addWarning(\Drupal::translation()->translate('Skipped @skipped node(s): @duplicate already had an identical pending queue job, @existing already had audio, @field missing or incompatible audio field, @empty had no source text, @unsupported used an unsupported language, @missing could not be loaded.', [
         '@skipped' => $skipped,
+        '@duplicate' => (int) ($results['skipped_duplicate_queue'] ?? 0),
         '@existing' => (int) ($results['skipped_existing_audio'] ?? 0),
         '@field' => (int) ($results['skipped_field_missing'] ?? 0),
         '@empty' => (int) ($results['skipped_source_empty'] ?? 0),

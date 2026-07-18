@@ -76,6 +76,7 @@ class HearMeCommands extends DrushCommands {
     $this->io()->table(['Metric', 'Count'], [
       ['Scanned', $stats['scanned']],
       ['Queued', $stats['queued']],
+      ['Skipped: already queued', $stats['skipped_duplicate_queue']],
       ['Skipped: already had audio', $stats['skipped_existing_audio']],
       ['Skipped: missing audio field', $stats['skipped_field_missing']],
       ['Skipped: no source text', $stats['skipped_source_empty']],

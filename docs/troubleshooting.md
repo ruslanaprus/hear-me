@@ -109,6 +109,8 @@ By default, `/hear-me/tts` runtime playback caching uses private files. Configur
 
 The backfill action only scans content types selected under **Queue TTS pre-generation for content types**. It skips nodes when the configured TTS audio field is missing or incompatible, the field already has audio and missing-only mode is used, the node has no source text, or the resolved language is not supported by the active provider.
 
+If a backfill reports fewer queued jobs than scanned nodes, check the skipped counts. Re-running backfill before cron processes existing jobs skips nodes whose current content hash already has an identical pending queue job.
+
 Use **Create HearMe audio field** first, then run **Queue existing content** again. If you use an existing field, confirm that it is an entity reference to media and allows the `hear_me_audio` bundle. With Drush installed, use `drush hear-me:queue-existing --requeue-existing` when existing attached audio should be regenerated.
 
 ## Generated Files Are Public

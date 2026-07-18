@@ -7,8 +7,10 @@ use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Entity\EntityInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Language\LanguageInterface;
+use Drupal\Core\Lock\LockBackendInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\Core\Queue\QueueFactory;
+use Drupal\Core\State\StateInterface;
 
 /**
  * Builds and validates queue items for node audio pre-generation.
@@ -21,6 +23,8 @@ class HearMeNodeAudioQueue {
     protected ConfigFactoryInterface $configFactory,
     protected EntityTypeManagerInterface $entityTypeManager,
     protected QueueFactory $queueFactory,
+    protected StateInterface $state,
+    protected LockBackendInterface $lock,
     LoggerChannelFactoryInterface $loggerFactory,
   ) {
     $this->logger = $loggerFactory->get('hear_me');
@@ -35,16 +39,69 @@ class HearMeNodeAudioQueue {
       return FALSE;
     }
 
-    $this->queueItem($queueItem);
-    return TRUE;
+    return $this->queueItem($queueItem);
   }
 
   /**
    * Adds a prebuilt node audio item to the queue.
    */
   public function queueItem(array $queueItem): bool {
-    $this->queueFactory->get('hear_me_tts')->createItem($queueItem);
+    $stateKey = $this->getQueuedHashStateKey($queueItem);
+    if ($stateKey === NULL) {
+      return $this->queueFactory->get('hear_me_tts')->createItem($queueItem) !== FALSE;
+    }
+
+    $lockName = 'hear_me.queue_hash.' . hash('sha256', $stateKey);
+    if (!$this->lock->acquire($lockName, 30.0)) {
+      return FALSE;
+    }
+
+    try {
+      if ($this->state->get($stateKey, FALSE)) {
+        return FALSE;
+      }
+
+      if ($this->queueFactory->get('hear_me_tts')->createItem($queueItem) === FALSE) {
+        return FALSE;
+      }
+      $this->state->set($stateKey, TRUE);
+    }
+    finally {
+      $this->lock->release($lockName);
+    }
+
     return TRUE;
+  }
+
+  /**
+   * Clears the pending marker for a processed or discarded queue item.
+   */
+  public function clearQueuedHash(int $nid, string $contentHash): void {
+    $stateKey = $this->buildQueuedHashStateKey($nid, $contentHash);
+    if ($stateKey !== NULL) {
+      $this->state->delete($stateKey);
+    }
+  }
+
+  /**
+   * Builds the state key for a queue item, if it supports de-duplication.
+   */
+  protected function getQueuedHashStateKey(array $queueItem): ?string {
+    return $this->buildQueuedHashStateKey(
+      (int) ($queueItem['nid'] ?? 0),
+      (string) ($queueItem['content_hash'] ?? ''),
+    );
+  }
+
+  /**
+   * Builds the state key for a node/hash pending queue marker.
+   */
+  protected function buildQueuedHashStateKey(int $nid, string $contentHash): ?string {
+    if ($nid <= 0 || $contentHash === '') {
+      return NULL;
+    }
+
+    return 'hear_me.queued_hash.' . $nid . '.' . $contentHash;
   }
 
   /**

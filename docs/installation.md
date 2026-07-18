@@ -128,12 +128,13 @@ Defaults are conservative:
 - Only published nodes are scanned unless **Include unpublished content** is checked.
 - If **Include unpublished content** is checked, the UI requires confirming that generated audio may be publicly accessible.
 - Only nodes with an empty configured TTS audio field are queued unless **Requeue content that already has audio** is checked.
+- Re-running backfill while an identical node/content hash is already pending skips the duplicate job.
 - Existing attached audio remains visible until a queued replacement succeeds.
 - Existing manual or unknown audio is not overwritten unless **Overwrite manually selected audio** is enabled.
 
 HearMe treats existing `hear_me_audio` media that points to generated files under `public://tts/` as HearMe-generated audio. Other existing values are treated as manual or unknown and are protected by default.
 
-The confirmed admin action uses Drupal Batch API and only creates queue jobs. Cron or queue workers perform the actual TTS synthesis later.
+The confirmed admin action uses Drupal Batch API and only creates queue jobs. Cron or queue workers perform the actual TTS synthesis later. Each queue item includes a content hash; the worker reloads the current node and skips stale jobs whose hash no longer matches before synthesis.
 
 Queue-generated audio is saved under `public://tts/` as Drupal Media/File entities. Do not queue unpublished, access-restricted, or otherwise sensitive content unless the generated audio is safe to expose as a public file.
 

@@ -60,11 +60,6 @@ class HearMeQueueWorker extends QueueWorkerBase implements ContainerFactoryPlugi
       return;
     }
 
-    $current = $this->nodeAudioQueue->buildCurrentQueueItem($nid);
-    if ($current === NULL) {
-      return;
-    }
-
     $queuedHash = (string) ($data['content_hash'] ?? '');
     if ($queuedHash === '' && !empty($data['text'])) {
       $queuedHash = $this->nodeAudioQueue->buildContentHash(
@@ -73,7 +68,18 @@ class HearMeQueueWorker extends QueueWorkerBase implements ContainerFactoryPlugi
       );
     }
 
-    if ($queuedHash === '' || !hash_equals($current['content_hash'], $queuedHash)) {
+    if ($queuedHash === '') {
+      return;
+    }
+
+    $current = $this->nodeAudioQueue->buildCurrentQueueItem($nid);
+    if ($current === NULL) {
+      $this->nodeAudioQueue->clearQueuedHash($nid, $queuedHash);
+      return;
+    }
+
+    if (!hash_equals($current['content_hash'], $queuedHash)) {
+      $this->nodeAudioQueue->clearQueuedHash($nid, $queuedHash);
       return;
     }
 
@@ -82,6 +88,8 @@ class HearMeQueueWorker extends QueueWorkerBase implements ContainerFactoryPlugi
     if ($media) {
       $this->ttsService->attachMediaToNode($nid, $media);
     }
+
+    $this->nodeAudioQueue->clearQueuedHash($nid, $queuedHash);
   }
 
 }

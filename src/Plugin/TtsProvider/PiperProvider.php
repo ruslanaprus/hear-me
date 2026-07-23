@@ -230,7 +230,7 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
       $this->logger->error(
         'Piper TTS HTTP request failed (endpoint: @endpoint, lang: @lang): @message',
         [
-          '@endpoint' => $endpoint,
+          '@endpoint' => self::getEndpointForLog($endpoint),
           '@lang'     => $lang,
           '@message'  => $e->getMessage(),
         ]
@@ -244,7 +244,7 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
         'Piper TTS returned unexpected HTTP @code (endpoint: @endpoint, lang: @lang).',
         [
           '@code'     => $statusCode,
-          '@endpoint' => $endpoint,
+          '@endpoint' => self::getEndpointForLog($endpoint),
           '@lang'     => $lang,
         ]
       );
@@ -257,7 +257,7 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
         'Piper TTS returned non-audio Content-Type @type (endpoint: @endpoint, lang: @lang).',
         [
           '@type' => $contentType === '' ? 'none' : $contentType,
-          '@endpoint' => $endpoint,
+          '@endpoint' => self::getEndpointForLog($endpoint),
           '@lang' => $lang,
         ]
       );
@@ -269,6 +269,27 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
       $this->getDefaultMimeType(),
       $this->getDefaultExtension(),
     );
+  }
+
+  private static function getEndpointForLog(string $endpoint): string {
+    $parts = parse_url($endpoint);
+    if (!is_array($parts) || empty($parts['host'])) {
+      return '[invalid endpoint]';
+    }
+
+    $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+    $host = trim((string) $parts['host'], '[]');
+    $authority = $scheme !== '' ? $scheme . '://' : '';
+    $authority .= str_contains($host, ':') ? '[' . $host . ']' : $host;
+
+    if (isset($parts['port'])) {
+      $authority .= ':' . (int) $parts['port'];
+    }
+
+    $path = (string) ($parts['path'] ?? '');
+    $query = isset($parts['query']) ? '?[redacted]' : '';
+
+    return $authority . $path . $query;
   }
 
 }

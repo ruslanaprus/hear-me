@@ -27,6 +27,9 @@
     <env name="MINK_DRIVER_ARGS_WEBDRIVER" value=""/>
   </php>
   <testsuites>
+    <testsuite name="hear_me_unit">
+      <directory>tests/src/Unit</directory>
+    </testsuite>
     <testsuite name="hear_me_kernel">
       <directory>tests/src/Kernel</directory>
     </testsuite>

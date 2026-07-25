@@ -97,15 +97,15 @@ class HearMeSettingsFormTest extends BrowserTestBase {
       'type' => 'article',
       'name' => 'Article',
     ]);
-    $this->createSourceField('article', 'body', 'text_with_summary', 'Body');
+    $this->createSourceField('article', 'field_summary_source', 'text_with_summary', 'Summary source');
     $this->createSourceField('article', 'field_intro', 'string', 'Intro');
     $this->createSourceField('article', 'field_rating', 'integer', 'Rating');
 
     $this->drupalGet('/admin/config/media/hear-me');
 
     $this->assertSession()->fieldExists('queue_source_fields[article][title]');
-    $this->assertSession()->fieldExists('queue_source_fields[article][fields][body:value]');
-    $this->assertSession()->fieldExists('queue_source_fields[article][fields][body:summary]');
+    $this->assertSession()->fieldExists('queue_source_fields[article][fields][field_summary_source:value]');
+    $this->assertSession()->fieldExists('queue_source_fields[article][fields][field_summary_source:summary]');
     $this->assertSession()->fieldExists('queue_source_fields[article][fields][field_intro:value]');
     $this->assertSession()->fieldNotExists('queue_source_fields[article][fields][field_rating:value]');
   }

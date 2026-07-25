@@ -20,7 +20,7 @@ class HearMeSettingsFormTest extends BrowserTestBase {
   /**
    * {@inheritdoc}
    */
-  protected static $modules = ['node', 'hear_me'];
+  protected static $modules = ['node', 'text', 'hear_me'];
 
   /**
    * {@inheritdoc}
@@ -85,6 +85,51 @@ class HearMeSettingsFormTest extends BrowserTestBase {
     $this->assertInstanceOf(FieldConfig::class, $field);
     $this->assertSame('media', $field->getFieldStorageDefinition()->getSetting('target_type'));
     $this->assertSame(['hear_me_audio' => 'hear_me_audio'], $field->getSetting('handler_settings')['target_bundles']);
+  }
+
+  /**
+   * Tests queue source field options only include supported field types.
+   */
+  public function testQueueSourceFieldOptionsOnlyOfferSupportedFields(): void {
+    $admin = $this->drupalCreateUser(['administer hear me']);
+    $this->drupalLogin($admin);
+    $this->drupalCreateContentType([
+      'type' => 'article',
+      'name' => 'Article',
+    ]);
+    $this->createSourceField('article', 'body', 'text_with_summary', 'Body');
+    $this->createSourceField('article', 'field_intro', 'string', 'Intro');
+    $this->createSourceField('article', 'field_rating', 'integer', 'Rating');
+
+    $this->drupalGet('/admin/config/media/hear-me');
+
+    $this->assertSession()->fieldExists('queue_source_fields[article][title]');
+    $this->assertSession()->fieldExists('queue_source_fields[article][fields][body:value]');
+    $this->assertSession()->fieldExists('queue_source_fields[article][fields][body:summary]');
+    $this->assertSession()->fieldExists('queue_source_fields[article][fields][field_intro:value]');
+    $this->assertSession()->fieldNotExists('queue_source_fields[article][fields][field_rating:value]');
+  }
+
+  /**
+   * Creates a node field for settings form source option tests.
+   */
+  protected function createSourceField(string $bundle, string $field_name, string $type, string $label): void {
+    if (!FieldStorageConfig::loadByName('node', $field_name)) {
+      FieldStorageConfig::create([
+        'field_name' => $field_name,
+        'entity_type' => 'node',
+        'type' => $type,
+      ])->save();
+    }
+
+    if (!FieldConfig::loadByName('node', $bundle, $field_name)) {
+      FieldConfig::create([
+        'field_name' => $field_name,
+        'entity_type' => 'node',
+        'bundle' => $bundle,
+        'label' => $label,
+      ])->save();
+    }
   }
 
 }

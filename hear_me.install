@@ -273,6 +273,16 @@ function hear_me_update_11002(): void {
 }
 
 /**
+ * Adds per-bundle queue source field configuration defaults.
+ */
+function hear_me_update_11003(): void {
+  $config = \Drupal::configFactory()->getEditable('hear_me.settings');
+  if ($config->get('queue_source_fields') === NULL) {
+    $config->set('queue_source_fields', [])->save();
+  }
+}
+
+/**
  * Returns module-owned audio directories.
  */
 function _hear_me_audio_directory_uris(): array {

@@ -17,6 +17,16 @@ use Drupal\Core\State\StateInterface;
  */
 class HearMeNodeAudioQueue {
 
+  public const SUPPORTED_SOURCE_FIELD_TYPES = [
+    'string',
+    'string_long',
+    'text',
+    'text_long',
+    'text_with_summary',
+  ];
+
+  protected const SOURCE_CONFIG_VERSION = 'v1';
+
   protected \Psr\Log\LoggerInterface $logger;
 
   public function __construct(
@@ -141,7 +151,7 @@ class HearMeNodeAudioQueue {
   }
 
   /**
-   * Checks whether the node title, body, or language changed.
+   * Checks whether the configured source text or language changed.
    */
   public function hasAudioSourceChanged(EntityInterface $entity): bool {
     if (!$this->isNodeQueuedForAudio($entity)) {
@@ -169,11 +179,12 @@ class HearMeNodeAudioQueue {
   /**
    * Builds a stable hash for queued node audio source text and language.
    */
-  public function buildContentHash(string $text, string $lang): string {
+  public function buildContentHash(string $text, string $lang, string $sourceConfigHash = ''): string {
     return hash('sha256', implode("\0", [
-      'v1',
+      'v2',
       $this->normalizeText($text),
       strtolower($lang),
+      $sourceConfigHash,
     ]));
   }
 
@@ -197,28 +208,142 @@ class HearMeNodeAudioQueue {
       return NULL;
     }
 
-    $bodyText = '';
-    if ($entity->hasField('body') && !$entity->get('body')->isEmpty()) {
-      $parts = [];
-      foreach ($entity->get('body') as $item) {
-        $parts[] = (string) ($item->value ?? '');
-      }
-      $bodyText = implode(' ', $parts);
+    $sourceConfig = $this->getBundleSourceConfig($entity);
+    $parts = [];
+    if ($sourceConfig['title']) {
+      $parts[] = $entity->label();
     }
 
-    $text = Html::decodeEntities(strip_tags(trim($entity->label() . ' ' . $bodyText)));
+    foreach ($sourceConfig['fields'] as $token) {
+      $fieldSource = $this->getSourceFieldText($entity, $token);
+      if ($fieldSource !== '') {
+        $parts[] = $fieldSource;
+      }
+    }
+
+    $text = $this->cleanSourceText(implode(' ', $parts));
     $text = $this->normalizeText($text);
     if ($text === '') {
       return NULL;
     }
 
     $lang = $this->resolveNodeLanguage($entity);
+    $sourceConfigHash = $this->buildSourceConfigHash($entity->bundle(), $sourceConfig);
 
     return [
       'text' => $text,
       'lang' => $lang,
-      'content_hash' => $this->buildContentHash($text, $lang),
+      'content_hash' => $this->buildContentHash($text, $lang, $sourceConfigHash),
+      'source_config_hash' => $sourceConfigHash,
     ];
+  }
+
+  /**
+   * Returns normalized source configuration for a node bundle.
+   */
+  protected function getBundleSourceConfig(EntityInterface $entity): array {
+    $sourceFields = $this->configFactory->get('hear_me.settings')->get('queue_source_fields');
+    $bundle = $entity->bundle();
+    if (!is_array($sourceFields) || !array_key_exists($bundle, $sourceFields) || !is_array($sourceFields[$bundle])) {
+      return [
+        'title' => TRUE,
+        'fields' => $entity->hasField('body') ? ['body:value'] : [],
+      ];
+    }
+
+    return $this->normalizeSourceConfig($sourceFields[$bundle]);
+  }
+
+  /**
+   * Normalizes stored source configuration to supported keys.
+   */
+  protected function normalizeSourceConfig(array $sourceConfig): array {
+    $fields = [];
+    foreach (($sourceConfig['fields'] ?? []) as $token) {
+      $parsed = $this->parseSourceFieldToken((string) $token);
+      if ($parsed !== NULL) {
+        $fields[] = $parsed['field'] . ':' . $parsed['property'];
+      }
+    }
+
+    return [
+      'title' => !empty($sourceConfig['title']),
+      'fields' => array_values(array_unique($fields)),
+    ];
+  }
+
+  /**
+   * Extracts text from a configured field token.
+   */
+  protected function getSourceFieldText(EntityInterface $entity, string $token): string {
+    $parsed = $this->parseSourceFieldToken($token);
+    if ($parsed === NULL || !$this->isSupportedSourceField($entity, $parsed['field'], $parsed['property'])) {
+      return '';
+    }
+
+    $parts = [];
+    foreach ($entity->get($parsed['field']) as $item) {
+      $parts[] = (string) ($item->{$parsed['property']} ?? '');
+    }
+
+    return implode(' ', $parts);
+  }
+
+  /**
+   * Checks whether a source field/property is currently supported.
+   */
+  protected function isSupportedSourceField(EntityInterface $entity, string $fieldName, string $property): bool {
+    if (!$entity->hasField($fieldName)) {
+      return FALSE;
+    }
+
+    $type = $entity->getFieldDefinition($fieldName)->getType();
+    if (!in_array($type, self::SUPPORTED_SOURCE_FIELD_TYPES, TRUE)) {
+      return FALSE;
+    }
+
+    return $property === 'value' || ($property === 'summary' && $type === 'text_with_summary');
+  }
+
+  /**
+   * Parses a source field token such as body:value or body:summary.
+   */
+  protected function parseSourceFieldToken(string $token): ?array {
+    $token = trim($token);
+    if ($token === '') {
+      return NULL;
+    }
+
+    [$fieldName, $property] = array_pad(explode(':', $token, 2), 2, 'value');
+    $fieldName = trim($fieldName);
+    $property = trim($property);
+    if (!preg_match('/^[a-z][a-z0-9_]*$/', $fieldName) || !in_array($property, ['value', 'summary'], TRUE)) {
+      return NULL;
+    }
+
+    return [
+      'field' => $fieldName,
+      'property' => $property,
+    ];
+  }
+
+  /**
+   * Builds the source-configuration hash included in queue content hashes.
+   */
+  protected function buildSourceConfigHash(string $bundle, array $sourceConfig): string {
+    return hash('sha256', serialize([
+      'version' => self::SOURCE_CONFIG_VERSION,
+      'bundle' => $bundle,
+      'title' => (bool) $sourceConfig['title'],
+      'fields' => array_values($sourceConfig['fields']),
+    ]));
+  }
+
+  /**
+   * Converts field HTML/formatted text to queue-safe plain text.
+   */
+  protected function cleanSourceText(string $text): string {
+    return Html::decodeEntities(strip_tags(trim($text)));
   }
 
   /**

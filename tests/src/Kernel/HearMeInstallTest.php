@@ -39,6 +39,7 @@ class HearMeInstallTest extends KernelTestBase {
     $this->assertSame('piper', $settings->get('provider'));
     $this->assertSame('private', $settings->get('runtime_cache_scheme'));
     $this->assertSame([], $settings->get('queue_bundles'));
+    $this->assertSame([], $settings->get('queue_source_fields'));
     $this->assertTrue($settings->get('replace_existing_generated_audio'));
     $this->assertFalse($settings->get('overwrite_manual_audio'));
 

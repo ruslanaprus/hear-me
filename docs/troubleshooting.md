@@ -29,6 +29,7 @@ After clearing caches, the queue worker manager should include `hear_me_tts`.
 If cron runs but no audio is generated, check:
 
 - **Queue TTS pre-generation for content types** includes the node's content type.
+- **Queue source fields** has at least one selected source for that content type. Existing installs default to title plus Body until the form is saved.
 - The configured **TTS Audio Field** exists on that node bundle. Use **Audio field setup** on the HearMe settings form to create it automatically.
 - The active provider can synthesize the node language.
 - Drupal cron is actually running.
@@ -107,11 +108,11 @@ By default, `/hear-me/tts` runtime playback caching uses private files. Configur
 
 ## Existing Content Was Not Queued
 
-The backfill action only scans content types selected under **Queue TTS pre-generation for content types**. It skips nodes when the configured TTS audio field is missing or incompatible, the field already has audio and missing-only mode is used, the node has no source text, or the resolved language is not supported by the active provider.
+The backfill action only scans content types selected under **Queue TTS pre-generation for content types**. It skips nodes when the configured TTS audio field is missing or incompatible, the field already has audio and missing-only mode is used, the configured title/source fields produce no source text, or the resolved language is not supported by the active provider.
 
 If a backfill reports fewer queued jobs than scanned nodes, check the skipped counts. Re-running backfill before cron processes existing jobs skips nodes whose current content hash already has an identical pending queue job.
 
-Use **Create HearMe audio field** first, then run **Queue existing content** again. If you use an existing field, confirm that it is an entity reference to media and allows the `hear_me_audio` bundle. With Drush installed, use `drush hear-me:queue-existing --requeue-existing` when existing attached audio should be regenerated.
+Use **Create HearMe audio field** first, review **Queue source fields**, then run **Queue existing content** again. Only stored plain text, long text, formatted text, and text-with-summary fields are offered as source fields. If you use an existing audio field, confirm that it is an entity reference to media and allows the `hear_me_audio` bundle. With Drush installed, use `drush hear-me:queue-existing --requeue-existing` when existing attached audio should be regenerated.
 
 ## Generated Files Are Public
 

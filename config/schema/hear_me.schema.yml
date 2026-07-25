@@ -56,6 +56,22 @@ hear_me.settings:
       sequence:
         type: string
         label: 'Bundle machine name'
+    queue_source_fields:
+      type: sequence
+      label: 'Per-bundle source field settings for queue-based TTS pre-generation'
+      sequence:
+        type: mapping
+        label: 'Bundle source field settings'
+        mapping:
+          title:
+            type: boolean
+            label: 'Include node title'
+          fields:
+            type: sequence
+            label: 'Selected source field tokens'
+            sequence:
+              type: string
+              label: 'Source field token'
     replace_existing_generated_audio:
       type: boolean
       label: 'Replace existing HearMe-generated audio when content changes'

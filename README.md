@@ -114,7 +114,7 @@ Important settings include:
 - Runtime cache storage and retention.
 - Rate limits and quotas.
 - Max request size and max text length.
-- Queue bundles and audio attachment field. Queue-generated media is stored under `public://tts/` by default.
+- Queue bundles, per-bundle source fields, and audio attachment field. Queue-generated media is stored under `public://tts/` by default.
 - Generated audio replacement and manual audio overwrite protection.
 - Audio field setup for selected content types.
 - Existing content backfill through the settings form or Drush.
@@ -125,6 +125,10 @@ See [Global settings](docs/installation.md#global-settings) for the full setting
 ### Existing Content Backfill
 
 After installing HearMe on a site that already has content, use **Queue existing content** on the settings page to add background audio-generation jobs for configured content types. If Drush is installed, the same backfill is available with `drush hear-me:queue-existing`.
+
+Before backfilling, review **Queue source fields**. Each queued content type can include the node title and any supported stored text fields. Supported field types are plain text, long text, formatted text, and text with summary; text-with-summary fields expose text and summary separately. Paragraphs, entity references, Layout Builder fields, and other complex fields are not offered in this release. Existing installs keep the legacy title plus Body behavior until the settings are saved.
+
+The selected source configuration is part of each queue item's content hash. Changing source fields causes newly queued jobs to use a new hash, and stale pending jobs are skipped before they can overwrite newer audio.
 
 By default, regenerated queue audio can replace existing HearMe-generated media so attached audio stays current after content changes. Manually selected or unknown audio is protected by default and is not overwritten unless **Overwrite manually selected audio** is enabled.
 
@@ -165,7 +169,7 @@ php tests/phpunit.php -c phpunit.xml.dist
 
 Set `SIMPLETEST_BASE_URL` and `SIMPLETEST_DB` to addresses reachable from the PHP process running PHPUnit. A MySQL URL has the form `mysql://user:password@host/database`.
 
-The PHPUnit suite covers install/uninstall defaults, config schema, queue worker discovery, settings form saves and endpoint validation, `/hear-me/tts` permission/CSRF access, no-store runtime response headers, audio field auto-creation, stale queue item skipping, existing-content backfill queueing and duplicate pending job skips, and manual audio overwrite protection.
+The PHPUnit suite covers install/uninstall defaults, config schema, queue worker discovery, settings form saves and endpoint validation, `/hear-me/tts` permission/CSRF access, no-store runtime response headers, audio field auto-creation, configurable queue source fields, source-configuration content hashes, stale queue item skipping, existing-content backfill queueing and duplicate pending job skips, and manual audio overwrite protection.
 
 The suite is expected to run without external services because `tests/modules/hear_me_test` registers a deterministic TTS provider that returns fixed WAV-like test data. Browser tests install temporary Drupal sites under Simpletest database prefixes and do not depend on the existing site configuration. The test bootstrap always loads Drupal from the host project and filters nested module-local `vendor/drupal/core` paths, so test execution uses the same Drupal core that installed the module.
 

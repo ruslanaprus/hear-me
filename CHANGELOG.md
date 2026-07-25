@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Flood API rate limits and daily/monthly quotas for synthesis requests.
 - Queue worker `hear_me_tts` for cron-based entity audio pre-generation.
 - Per-content-type queue source field selection for generated entity audio.
+- Predictable generated-audio node attachment behavior with field validation and documented node save side effects.
 - Settings form action to create the generated audio media reference field on selected content types.
 - Settings form and Drush backfill actions to queue existing content for audio pre-generation.
 - Setup status panel for provider, queue worker, media type, audio field, file storage, cron, and anonymous permission checks.

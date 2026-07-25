@@ -215,6 +215,8 @@ When a node is created, or when its configured source text or language changes, 
 
 **Queue source fields** only lists stored node fields that HearMe can safely extract as plain text: `string`, `string_long`, `text`, `text_long`, and `text_with_summary`. Text-with-summary fields expose separate text and summary choices. Paragraphs, entity references, Layout Builder fields, and other complex fields are not supported in this release. If no supported fields are available for a queued content type, include the node title or add a supported text field before saving.
 
+Attaching generated audio is a normal node save because the configured media reference field must be updated. That can update the node changed time and trigger normal Drupal save side effects such as cache invalidation, search indexing, and site-specific integrations. HearMe does not intentionally create a new revision for this save and does not change publication status or `moderation_state`; Drupal core or contrib workflow modules may still enforce their own revision behaviour.
+
 The existing attached audio remains visible until the replacement job succeeds. This keeps enrolled nodes consistent while avoiding old queue jobs overwriting newer audio.
 
 This keeps heavy synthesis work out of the request cycle. The queue can be processed by any Drupal-compatible queue backend: the default database queue, or a contributed module such as those backed by Redis, RabbitMQ, Amazon SQS, or any other broker.

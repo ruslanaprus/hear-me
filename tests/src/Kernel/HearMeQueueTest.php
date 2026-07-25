@@ -15,6 +15,7 @@ use Drupal\media\Entity\Media;
 use Drupal\media\MediaInterface;
 use Drupal\node\Entity\Node;
 use Drupal\node\Entity\NodeType;
+use Drupal\Tests\content_moderation\Traits\ContentModerationTestTrait;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 
@@ -24,6 +25,8 @@ use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 #[Group('hear_me')]
 #[RunTestsInSeparateProcesses]
 class HearMeQueueTest extends EntityKernelTestBase {
+
+  use ContentModerationTestTrait;
 
   /**
    * {@inheritdoc}
@@ -39,6 +42,9 @@ class HearMeQueueTest extends EntityKernelTestBase {
     'media',
     'node',
     'hear_me',
+    'hear_me_test',
+    'workflows',
+    'content_moderation',
   ];
 
   /**
@@ -49,9 +55,11 @@ class HearMeQueueTest extends EntityKernelTestBase {
 
     $this->installEntitySchema('file');
     $this->installEntitySchema('media');
+    $this->installEntitySchema('content_moderation_state');
+    $this->installSchema('node', ['node_access']);
     $this->installSchema('file', ['file_usage']);
     $this->installSchema('hear_me', ['hear_me_audio_cache']);
-    $this->installConfig(['node', 'file', 'image', 'media', 'hear_me']);
+    $this->installConfig(['node', 'file', 'image', 'media', 'hear_me', 'content_moderation']);
   }
 
   /**
@@ -271,6 +279,123 @@ class HearMeQueueTest extends EntityKernelTestBase {
   }
 
   /**
+   * Tests worker audio attachment does not enqueue another identical job.
+   */
+  public function testQueueWorkerAttachmentDoesNotRequeueAudioFieldUpdate(): void {
+    $this->createContentType('article', 'Article');
+    $this->createAudioReferenceField('article');
+    $this->config('hear_me.settings')
+      ->set('provider', 'test')
+      ->set('queue_bundles', ['article'])
+      ->set('queue_source_fields', [
+        'article' => [
+          'title' => TRUE,
+          'fields' => [],
+        ],
+      ])
+      ->set('tts_audio_field', 'field_tts_audio')
+      ->save();
+
+    $node = Node::create([
+      'type' => 'article',
+      'title' => 'Queued title',
+      'status' => 1,
+    ]);
+    $node->save();
+
+    $queue = \Drupal::queue('hear_me_tts');
+    $this->assertSame(1, $queue->numberOfItems());
+
+    $item = $queue->claimItem();
+    $this->assertNotFalse($item);
+    $this->container->get('plugin.manager.queue_worker')
+      ->createInstance('hear_me_tts')
+      ->processItem($item->data);
+    $queue->deleteItem($item);
+
+    $this->assertSame(0, $queue->numberOfItems());
+
+    $storage = $this->container->get('entity_type.manager')->getStorage('node');
+    $storage->resetCache([$node->id()]);
+    $reloaded = $storage->load($node->id());
+    $this->assertFalse($reloaded->get('field_tts_audio')->isEmpty());
+  }
+
+  /**
+   * Tests generated audio attachment does not request a new node revision.
+   */
+  public function testGeneratedAudioAttachmentDoesNotRequestNewRevision(): void {
+    $this->createContentType('article', 'Article');
+    $this->createAudioReferenceField('article');
+    $this->config('hear_me.settings')
+      ->set('tts_audio_field', 'field_tts_audio')
+      ->save();
+
+    $node = Node::create([
+      'type' => 'article',
+      'title' => 'Revision-safe node',
+      'status' => 1,
+    ]);
+    $node->save();
+
+    $storage = $this->container->get('entity_type.manager')->getStorage('node');
+    $revisionIdsBefore = $this->getNodeRevisionIds((int) $node->id());
+
+    $media = $this->createAudioMedia('public://tts/revision-safe.wav', 'Revision-safe audio');
+    $this->container->get('hear_me.service')->attachMediaToNode((int) $node->id(), $media);
+
+    $storage->resetCache([$node->id()]);
+    $reloaded = $storage->load($node->id());
+
+    $this->assertSame($revisionIdsBefore, $this->getNodeRevisionIds((int) $reloaded->id()));
+    $this->assertSame((int) $media->id(), (int) $reloaded->get('field_tts_audio')->target_id);
+  }
+
+  /**
+   * Tests generated audio attachment preserves moderation state and status.
+   */
+  public function testGeneratedAudioAttachmentPreservesModerationState(): void {
+    $this->createContentType('article', 'Article');
+    $this->createAudioReferenceField('article');
+    $workflow = $this->createEditorialWorkflow();
+    $this->addEntityTypeAndBundleToWorkflow($workflow, 'node', 'article');
+    $this->config('hear_me.settings')
+      ->set('tts_audio_field', 'field_tts_audio')
+      ->save();
+
+    $draft = Node::create([
+      'type' => 'article',
+      'title' => 'Moderated draft',
+      'moderation_state' => 'draft',
+    ]);
+    $draft->save();
+    $published = Node::create([
+      'type' => 'article',
+      'title' => 'Moderated published',
+      'moderation_state' => 'published',
+    ]);
+    $published->save();
+
+    $draftMedia = $this->createAudioMedia('public://tts/moderated-draft.wav', 'Draft audio');
+    $publishedMedia = $this->createAudioMedia('public://tts/moderated-published.wav', 'Published audio');
+    $service = $this->container->get('hear_me.service');
+    $service->attachMediaToNode((int) $draft->id(), $draftMedia);
+    $service->attachMediaToNode((int) $published->id(), $publishedMedia);
+
+    $storage = $this->container->get('entity_type.manager')->getStorage('node');
+    $storage->resetCache([$draft->id(), $published->id()]);
+    $reloadedDraft = $storage->load($draft->id());
+    $reloadedPublished = $storage->load($published->id());
+
+    $this->assertSame('draft', $reloadedDraft->get('moderation_state')->value);
+    $this->assertFalse($reloadedDraft->isPublished());
+    $this->assertSame((int) $draftMedia->id(), (int) $reloadedDraft->get('field_tts_audio')->target_id);
+    $this->assertSame('published', $reloadedPublished->get('moderation_state')->value);
+    $this->assertTrue($reloadedPublished->isPublished());
+    $this->assertSame((int) $publishedMedia->id(), (int) $reloadedPublished->get('field_tts_audio')->target_id);
+  }
+
+  /**
    * Creates a content type for node tests.
    */
   protected function createContentType(string $type, string $label): void {
@@ -358,6 +483,25 @@ class HearMeQueueTest extends EntityKernelTestBase {
     $media->save();
 
     return $media;
+  }
+
+  /**
+   * Returns node revision IDs in ascending order.
+   *
+   * @return int[]
+   *   Revision IDs.
+   */
+  protected function getNodeRevisionIds(int $nid): array {
+    $ids = $this->container->get('entity_type.manager')
+      ->getStorage('node')
+      ->getQuery()
+      ->allRevisions()
+      ->accessCheck(FALSE)
+      ->condition('nid', $nid)
+      ->sort('vid')
+      ->execute();
+
+    return array_values(array_map('intval', $ids));
   }
 
 }

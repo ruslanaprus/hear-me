@@ -134,6 +134,8 @@ By default, regenerated queue audio can replace existing HearMe-generated media 
 
 Queue-generated entity audio is stored under `public://tts/` as Drupal Media/File entities. The private runtime cache setting applies only to `/hear-me/tts` click-triggered playback, not generated media attached to content. The UI requires explicit confirmation before backfilling unpublished content because generated audio may become publicly reachable by file URL.
 
+When a queue worker attaches generated audio, HearMe saves the node to update the configured audio field. That save can update the node changed time and trigger normal Drupal save side effects such as search indexing, cache invalidation, and integrations. HearMe does not intentionally create a new revision and does not change publication or moderation state; Drupal core or contrib workflow modules may still enforce their own revision behaviour during save.
+
 ## Documentation
 
 - [Installation](docs/installation.md)

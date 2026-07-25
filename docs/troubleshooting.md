@@ -114,6 +114,8 @@ If a backfill reports fewer queued jobs than scanned nodes, check the skipped co
 
 Use **Create HearMe audio field** first, review **Queue source fields**, then run **Queue existing content** again. Only stored plain text, long text, formatted text, and text-with-summary fields are offered as source fields. If you use an existing audio field, confirm that it is an entity reference to media and allows the `hear_me_audio` bundle. With Drush installed, use `drush hear-me:queue-existing --requeue-existing` when existing attached audio should be regenerated.
 
+When a queued job succeeds, HearMe saves the node to attach the generated Media entity. If you see changed timestamps, search indexing, cache invalidation, or integration hooks firing after queue processing, that is expected. HearMe does not intentionally create a revision or change `moderation_state`, but moderation/workflow modules can enforce their own revision behaviour.
+
 ## Generated Files Are Public
 
 Runtime files are private by default, but can be public if **Runtime cache file storage** is set to public.

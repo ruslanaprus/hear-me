@@ -4,12 +4,15 @@ namespace Drupal\hear_me\Service;
 
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\Core\Entity\RevisionableInterface;
 use Drupal\Core\Lock\LockBackendInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\Core\PrivateKey;
 use Drupal\hear_me\TtsAudioResult;
 use Drupal\hear_me\TtsSynthesisResult;
 use Drupal\media\Entity\Media;
+use Drupal\media\MediaInterface;
+use Drupal\node\NodeInterface;
 
 class HearMeService {
 
@@ -305,14 +308,19 @@ class HearMeService {
   /**
    * Attaches a synthesized media entity to a node field.
    */
-  public function attachMediaToNode(int $nid, Media $media): void {
+  public function attachMediaToNode(int $nid, MediaInterface $media): void {
     $config = $this->configFactory->get('hear_me.settings');
     $fieldName = $config->get('tts_audio_field') ?? 'field_tts_audio';
     $replaceGenerated = $config->get('replace_existing_generated_audio') ?? TRUE;
     $overwriteManual = $config->get('overwrite_manual_audio') ?? FALSE;
+    $mediaId = (int) $media->id();
+    if ($mediaId <= 0) {
+      $this->logger->warning('HearMe: cannot attach unsaved audio media to node @nid.', ['@nid' => $nid]);
+      return;
+    }
 
     $node = $this->entityTypeManager->getStorage('node')->load($nid);
-    if (!$node || !$node->hasField($fieldName)) {
+    if (!$node instanceof NodeInterface || !$node->hasField($fieldName)) {
       $this->logger->warning(
         'HearMe: cannot attach audio to node @nid; node not found or field "@field" does not exist.',
         ['@nid' => $nid, '@field' => $fieldName]
@@ -320,8 +328,23 @@ class HearMeService {
       return;
     }
 
-    if (!$node->get($fieldName)->isEmpty()) {
-      $existingMediaIds = $this->getFieldTargetIds($node->get($fieldName)->getValue());
+    $field = $node->get($fieldName);
+    $fieldDefinition = $field->getFieldDefinition();
+    $fieldStorage = $fieldDefinition->getFieldStorageDefinition();
+    if ($fieldDefinition->getType() !== 'entity_reference' || $fieldStorage->getSetting('target_type') !== 'media') {
+      $this->logger->warning(
+        'HearMe: cannot attach audio to node @nid; field "@field" is not a media reference field.',
+        ['@nid' => $nid, '@field' => $fieldName]
+      );
+      return;
+    }
+
+    if ($this->getFieldTargetIds($field->getValue()) === [$mediaId]) {
+      return;
+    }
+
+    if (!$field->isEmpty()) {
+      $existingMediaIds = $this->getFieldTargetIds($field->getValue());
       $existingIsGenerated = $this->allMediaIdsAreHearMeGenerated($existingMediaIds);
 
       if ($existingIsGenerated && !$replaceGenerated) {
@@ -341,8 +364,36 @@ class HearMeService {
       }
     }
 
-    $node->set($fieldName, $media->id());
+    $node->set($fieldName, ['target_id' => $mediaId]);
+    $violations = $node->get($fieldName)->validate();
+    if ($violations->count() > 0) {
+      $this->logger->error(
+        'HearMe: skipped attaching audio to node @nid because field "@field" failed validation: @violations',
+        [
+          '@nid' => $nid,
+          '@field' => $fieldName,
+          '@violations' => $this->summarizeViolations($violations),
+        ]
+      );
+      return;
+    }
+
+    if ($node instanceof RevisionableInterface) {
+      $node->setNewRevision(FALSE);
+    }
     $node->save();
+  }
+
+  /**
+   * Returns a compact validation violation summary for logs.
+   */
+  protected function summarizeViolations(\Traversable $violations): string {
+    $messages = [];
+    foreach ($violations as $violation) {
+      $messages[] = trim($violation->getPropertyPath() . ': ' . $violation->getMessage());
+    }
+
+    return implode('; ', $messages);
   }
 
   /**

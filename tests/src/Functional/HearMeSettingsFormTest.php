@@ -98,23 +98,27 @@ class HearMeSettingsFormTest extends BrowserTestBase {
       'name' => 'Article',
     ]);
     $this->createSourceField('article', 'field_summary_source', 'text_with_summary', 'Summary source');
-    $this->createSourceField('article', 'field_intro', 'string', 'Intro');
-    $this->createSourceField('article', 'field_rating', 'integer', 'Rating');
+    $this->createSourceField('article', 'field_intro_source', 'string', 'Intro source');
+    $this->createSourceField('article', 'field_rating_source', 'integer', 'Rating source');
 
     $this->drupalGet('/admin/config/media/hear-me');
 
     $this->assertSession()->fieldExists('queue_source_fields[article][title]');
     $this->assertSession()->fieldExists('queue_source_fields[article][fields][field_summary_source:value]');
     $this->assertSession()->fieldExists('queue_source_fields[article][fields][field_summary_source:summary]');
-    $this->assertSession()->fieldExists('queue_source_fields[article][fields][field_intro:value]');
-    $this->assertSession()->fieldNotExists('queue_source_fields[article][fields][field_rating:value]');
+    $this->assertSession()->fieldExists('queue_source_fields[article][fields][field_intro_source:value]');
+    $this->assertSession()->fieldNotExists('queue_source_fields[article][fields][field_rating_source:value]');
   }
 
   /**
    * Creates a node field for settings form source option tests.
    */
   protected function createSourceField(string $bundle, string $field_name, string $type, string $label): void {
-    if (!FieldStorageConfig::loadByName('node', $field_name)) {
+    $storage = FieldStorageConfig::loadByName('node', $field_name);
+    if ($storage) {
+      $this->assertSame($type, $storage->getType(), "The $field_name field already exists with an unexpected type.");
+    }
+    else {
       FieldStorageConfig::create([
         'field_name' => $field_name,
         'entity_type' => 'node',

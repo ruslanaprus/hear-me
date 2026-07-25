@@ -152,22 +152,22 @@ class HearMeQueueTest extends EntityKernelTestBase {
   }
 
   /**
-   * Tests queue source text can use title, body, and configured text fields.
+   * Tests queue source text can use title and configured text fields.
    */
   public function testQueueSourceFieldsAreConfigurable(): void {
     $this->createContentType('article', 'Article');
-    $this->createSourceField('article', 'body', 'text_with_summary', 'Body');
-    $this->createSourceField('article', 'field_intro', 'string', 'Intro');
+    $this->createSourceField('article', 'field_summary_source', 'text_with_summary', 'Summary source');
+    $this->createSourceField('article', 'field_intro_source', 'string', 'Intro source');
 
     $node = Node::create([
       'type' => 'article',
       'title' => 'Readable title',
       'status' => 1,
-      'body' => [
+      'field_summary_source' => [
         'value' => '<p>Body value</p>',
         'summary' => 'Body summary',
       ],
-      'field_intro' => 'Intro value',
+      'field_intro_source' => 'Intro value',
     ]);
     $node->save();
 
@@ -177,7 +177,7 @@ class HearMeQueueTest extends EntityKernelTestBase {
     $settings->set('queue_source_fields', [
       'article' => [
         'title' => TRUE,
-        'fields' => ['body:value'],
+        'fields' => ['field_summary_source:value'],
       ],
     ])->save();
     $item = $this->container->get('hear_me.node_audio_queue')->buildQueueItem($node);
@@ -186,7 +186,7 @@ class HearMeQueueTest extends EntityKernelTestBase {
     $settings->set('queue_source_fields', [
       'article' => [
         'title' => TRUE,
-        'fields' => ['body:value', 'field_intro:value'],
+        'fields' => ['field_summary_source:value', 'field_intro_source:value'],
       ],
     ])->save();
     $item = $this->container->get('hear_me.node_audio_queue')->buildQueueItem($node);
@@ -195,7 +195,7 @@ class HearMeQueueTest extends EntityKernelTestBase {
     $settings->set('queue_source_fields', [
       'article' => [
         'title' => FALSE,
-        'fields' => ['body:value', 'body:summary', 'field_intro:value'],
+        'fields' => ['field_summary_source:value', 'field_summary_source:summary', 'field_intro_source:value'],
       ],
     ])->save();
     $item = $this->container->get('hear_me.node_audio_queue')->buildQueueItem($node);
@@ -207,13 +207,13 @@ class HearMeQueueTest extends EntityKernelTestBase {
    */
   public function testQueueSourceConfigurationChangesContentHash(): void {
     $this->createContentType('article', 'Article');
-    $this->createSourceField('article', 'field_intro', 'string', 'Intro');
+    $this->createSourceField('article', 'field_intro_source', 'string', 'Intro source');
 
     $node = Node::create([
       'type' => 'article',
       'title' => 'Same source',
       'status' => 1,
-      'field_intro' => 'Same source',
+      'field_intro_source' => 'Same source',
     ]);
     $node->save();
 
@@ -231,7 +231,7 @@ class HearMeQueueTest extends EntityKernelTestBase {
     $settings->set('queue_source_fields', [
       'article' => [
         'title' => FALSE,
-        'fields' => ['field_intro:value'],
+        'fields' => ['field_intro_source:value'],
       ],
     ])->save();
     $introOnly = $this->container->get('hear_me.node_audio_queue')->buildQueueItem($node);
@@ -318,7 +318,11 @@ class HearMeQueueTest extends EntityKernelTestBase {
    * Creates a source field used by queue source text tests.
    */
   protected function createSourceField(string $bundle, string $field_name, string $type, string $label): void {
-    if (!FieldStorageConfig::loadByName('node', $field_name)) {
+    $storage = FieldStorageConfig::loadByName('node', $field_name);
+    if ($storage) {
+      $this->assertSame($type, $storage->getType(), "The $field_name field already exists with an unexpected type.");
+    }
+    else {
       FieldStorageConfig::create([
         'field_name' => $field_name,
         'entity_type' => 'node',

@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Setup status panel for provider, queue worker, media type, audio field, file storage, cron, and anonymous permission checks.
 - Module-specific `administer hear me` permission for delegated HearMe configuration access.
 - Admin settings form for provider, cache, rate limit, queue, and request size configuration.
+- Characterization coverage for provider resolution, generated-audio attachment decisions, audio-field provisioning, and the existing-content backfill workflow.
 
 ### Changed
 

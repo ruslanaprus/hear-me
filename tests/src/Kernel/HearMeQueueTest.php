@@ -279,6 +279,224 @@ class HearMeQueueTest extends EntityKernelTestBase {
   }
 
   /**
+   * Tests unsaved media is not attached to a node.
+   */
+  public function testUnsavedMediaIsNotAttached(): void {
+    $this->createContentType('article', 'Article');
+    $this->createAudioReferenceField('article');
+    $node = Node::create([
+      'type' => 'article',
+      'title' => 'Node without audio',
+    ]);
+    $node->save();
+    $revision_ids = $this->getNodeRevisionIds((int) $node->id());
+    $media = Media::create([
+      'bundle' => 'hear_me_audio',
+      'name' => 'Unsaved audio',
+    ]);
+
+    $this->container->get('hear_me.service')->attachMediaToNode((int) $node->id(), $media);
+
+    $this->assertTrue($this->reloadNode($node)->get('field_tts_audio')->isEmpty());
+    $this->assertSame($revision_ids, $this->getNodeRevisionIds((int) $node->id()));
+  }
+
+  /**
+   * Tests missing nodes and configured fields are ignored.
+   */
+  public function testMissingNodeAndFieldAreIgnored(): void {
+    $this->createContentType('article', 'Article');
+    $node = Node::create([
+      'type' => 'article',
+      'title' => 'Node without configured field',
+    ]);
+    $node->save();
+    $revision_ids = $this->getNodeRevisionIds((int) $node->id());
+    $media = $this->createAudioMedia('public://tts/missing-target.wav', 'Missing target audio');
+    $service = $this->container->get('hear_me.service');
+
+    $service->attachMediaToNode(999999, $media);
+    $service->attachMediaToNode((int) $node->id(), $media);
+
+    $this->assertSame('Node without configured field', $this->reloadNode($node)->label());
+    $this->assertSame($revision_ids, $this->getNodeRevisionIds((int) $node->id()));
+  }
+
+  /**
+   * Tests an entity reference with the wrong target type is ignored.
+   */
+  public function testWrongFieldTargetTypeIsIgnored(): void {
+    $this->createContentType('article', 'Article');
+    FieldStorageConfig::create([
+      'field_name' => 'field_tts_audio',
+      'entity_type' => 'node',
+      'type' => 'entity_reference',
+      'settings' => ['target_type' => 'file'],
+    ])->save();
+    FieldConfig::create([
+      'field_name' => 'field_tts_audio',
+      'entity_type' => 'node',
+      'bundle' => 'article',
+      'label' => 'Wrong audio target',
+    ])->save();
+    $node = Node::create([
+      'type' => 'article',
+      'title' => 'Node with file reference',
+    ]);
+    $node->save();
+    $revision_ids = $this->getNodeRevisionIds((int) $node->id());
+    $media = $this->createAudioMedia('public://tts/wrong-target.wav', 'Wrong target audio');
+
+    $this->container->get('hear_me.service')->attachMediaToNode((int) $node->id(), $media);
+
+    $this->assertTrue($this->reloadNode($node)->get('field_tts_audio')->isEmpty());
+    $this->assertSame($revision_ids, $this->getNodeRevisionIds((int) $node->id()));
+  }
+
+  /**
+   * Tests attaching the same media leaves the existing reference unchanged.
+   */
+  public function testSameMediaAlreadyAttachedIsUnchanged(): void {
+    $this->createContentType('article', 'Article');
+    $this->createAudioReferenceField('article');
+    $media = $this->createAudioMedia('public://tts/already-attached.wav', 'Already attached audio');
+    $node = Node::create([
+      'type' => 'article',
+      'title' => 'Node with generated audio',
+      'field_tts_audio' => ['target_id' => $media->id()],
+    ]);
+    $node->save();
+    $revision_ids = $this->getNodeRevisionIds((int) $node->id());
+
+    $this->container->get('hear_me.service')->attachMediaToNode((int) $node->id(), $media);
+
+    $reloaded = $this->reloadNode($node);
+    $this->assertSame((int) $media->id(), (int) $reloaded->get('field_tts_audio')->target_id);
+    $this->assertSame($revision_ids, $this->getNodeRevisionIds((int) $node->id()));
+  }
+
+  /**
+   * Tests generated audio replacement honors its configuration setting.
+   */
+  public function testGeneratedAudioReplacementRespectsConfiguration(): void {
+    $this->createContentType('article', 'Article');
+    $this->createAudioReferenceField('article');
+    $existing = $this->createAudioMedia('public://tts/existing-generated.wav', 'Existing generated audio');
+    $replacement = $this->createAudioMedia('public://tts/replacement-generated.wav', 'Replacement generated audio');
+    $disabled_node = Node::create([
+      'type' => 'article',
+      'title' => 'Generated replacement disabled',
+      'field_tts_audio' => ['target_id' => $existing->id()],
+    ]);
+    $disabled_node->save();
+    $disabled_revision_ids = $this->getNodeRevisionIds((int) $disabled_node->id());
+    $enabled_node = Node::create([
+      'type' => 'article',
+      'title' => 'Generated replacement enabled',
+      'field_tts_audio' => ['target_id' => $existing->id()],
+    ]);
+    $enabled_node->save();
+    $settings = $this->config('hear_me.settings');
+    $service = $this->container->get('hear_me.service');
+
+    $settings->set('replace_existing_generated_audio', FALSE)->save();
+    $service->attachMediaToNode((int) $disabled_node->id(), $replacement);
+    $settings->set('replace_existing_generated_audio', TRUE)->save();
+    $service->attachMediaToNode((int) $enabled_node->id(), $replacement);
+
+    $this->assertSame((int) $existing->id(), (int) $this->reloadNode($disabled_node)->get('field_tts_audio')->target_id);
+    $this->assertSame($disabled_revision_ids, $this->getNodeRevisionIds((int) $disabled_node->id()));
+    $this->assertSame((int) $replacement->id(), (int) $this->reloadNode($enabled_node)->get('field_tts_audio')->target_id);
+  }
+
+  /**
+   * Tests manually selected audio can be overwritten when enabled.
+   */
+  public function testManualAudioCanBeOverwritten(): void {
+    $this->createContentType('article', 'Article');
+    $this->createAudioReferenceField('article');
+    $this->config('hear_me.settings')
+      ->set('overwrite_manual_audio', TRUE)
+      ->save();
+    $manual_media = $this->createAudioMedia('public://manual/overwrite.wav', 'Manual audio');
+    $generated_media = $this->createAudioMedia('public://tts/manual-replacement.wav', 'Generated replacement');
+    $node = Node::create([
+      'type' => 'article',
+      'title' => 'Node with replaceable manual audio',
+      'field_tts_audio' => ['target_id' => $manual_media->id()],
+    ]);
+    $node->save();
+
+    $this->container->get('hear_me.service')->attachMediaToNode((int) $node->id(), $generated_media);
+
+    $this->assertSame((int) $generated_media->id(), (int) $this->reloadNode($node)->get('field_tts_audio')->target_id);
+  }
+
+  /**
+   * Tests a field validation failure does not persist the new reference.
+   */
+  public function testFieldValidationFailureDoesNotPersistReference(): void {
+    $this->createContentType('article', 'Article');
+    $this->createAudioReferenceField('article', 'field_tts_audio', 1, [
+      'unsupported_bundle' => 'unsupported_bundle',
+    ]);
+    $node = Node::create([
+      'type' => 'article',
+      'title' => 'Node with restricted audio field',
+    ]);
+    $node->save();
+    $revision_ids = $this->getNodeRevisionIds((int) $node->id());
+    $media = $this->createAudioMedia('public://tts/invalid-reference.wav', 'Invalid reference audio');
+
+    $this->container->get('hear_me.service')->attachMediaToNode((int) $node->id(), $media);
+
+    $this->assertTrue($this->reloadNode($node)->get('field_tts_audio')->isEmpty());
+    $this->assertSame($revision_ids, $this->getNodeRevisionIds((int) $node->id()));
+  }
+
+  /**
+   * Tests mixed and missing existing references are treated as manual audio.
+   */
+  public function testMixedAndMissingExistingMediaReferencesArePreserved(): void {
+    $this->createContentType('article', 'Article');
+    $this->createAudioReferenceField('article', 'field_tts_audio', -1);
+    $generated = $this->createAudioMedia('public://tts/existing-mixed.wav', 'Existing generated audio');
+    $manual = $this->createAudioMedia('public://manual/existing-mixed.wav', 'Existing manual audio');
+    $replacement = $this->createAudioMedia('public://tts/mixed-replacement.wav', 'Generated replacement');
+    $mixed_node = Node::create([
+      'type' => 'article',
+      'title' => 'Mixed references',
+      'field_tts_audio' => [
+        ['target_id' => $generated->id()],
+        ['target_id' => $manual->id()],
+      ],
+    ]);
+    $mixed_node->save();
+    $missing_node = Node::create([
+      'type' => 'article',
+      'title' => 'Missing reference',
+      'field_tts_audio' => [
+        ['target_id' => $generated->id()],
+        ['target_id' => 999999],
+      ],
+    ]);
+    $missing_node->save();
+
+    $service = $this->container->get('hear_me.service');
+    $service->attachMediaToNode((int) $mixed_node->id(), $replacement);
+    $service->attachMediaToNode((int) $missing_node->id(), $replacement);
+
+    $this->assertSame(
+      [(int) $generated->id(), (int) $manual->id()],
+      $this->getReferencedMediaIds($this->reloadNode($mixed_node)),
+    );
+    $this->assertSame(
+      [(int) $generated->id(), 999999],
+      $this->getReferencedMediaIds($this->reloadNode($missing_node)),
+    );
+  }
+
+  /**
    * Tests worker audio attachment does not enqueue another identical job.
    */
   public function testQueueWorkerAttachmentDoesNotRequeueAudioFieldUpdate(): void {
@@ -408,7 +626,12 @@ class HearMeQueueTest extends EntityKernelTestBase {
   /**
    * Creates the node media reference field used by queue-generated audio.
    */
-  protected function createAudioReferenceField(string $bundle, string $field_name = 'field_tts_audio'): void {
+  protected function createAudioReferenceField(
+    string $bundle,
+    string $field_name = 'field_tts_audio',
+    int $cardinality = 1,
+    array $target_bundles = ['hear_me_audio' => 'hear_me_audio'],
+  ): void {
     if (!FieldStorageConfig::loadByName('node', $field_name)) {
       FieldStorageConfig::create([
         'field_name' => $field_name,
@@ -417,7 +640,7 @@ class HearMeQueueTest extends EntityKernelTestBase {
         'settings' => [
           'target_type' => 'media',
         ],
-        'cardinality' => 1,
+        'cardinality' => $cardinality,
       ])->save();
     }
 
@@ -430,9 +653,7 @@ class HearMeQueueTest extends EntityKernelTestBase {
         'settings' => [
           'handler' => 'default:media',
           'handler_settings' => [
-            'target_bundles' => [
-              'hear_me_audio' => 'hear_me_audio',
-            ],
+            'target_bundles' => $target_bundles,
           ],
         ],
       ])->save();
@@ -483,6 +704,28 @@ class HearMeQueueTest extends EntityKernelTestBase {
     $media->save();
 
     return $media;
+  }
+
+  /**
+   * Reloads a node from persistent storage.
+   */
+  protected function reloadNode(Node $node): Node {
+    $storage = $this->container->get('entity_type.manager')->getStorage('node');
+    $storage->resetCache([$node->id()]);
+    return $storage->load($node->id());
+  }
+
+  /**
+   * Returns the target IDs from the configured audio field.
+   *
+   * @return int[]
+   *   Referenced Media IDs.
+   */
+  protected function getReferencedMediaIds(Node $node): array {
+    return array_map(
+      static fn(array $item): int => (int) $item['target_id'],
+      $node->get('field_tts_audio')->getValue(),
+    );
   }
 
   /**

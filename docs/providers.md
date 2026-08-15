@@ -1,111 +1,226 @@
-# Provider Development
+# TTS Provider Plugin Development
 
-HearMe discovers TTS providers as Drupal services tagged with `hear_me.provider`.
+This guide explains how to connect a text-to-speech backend to HearMe by creating a Drupal TTS provider plugin.
 
-The built-in Piper-compatible HTTP adapter is only one implementation. A provider can call a local service, a private HTTP API, or a cloud TTS API.
+A provider plugin is the integration layer between HearMe and a TTS backend. HearMe supplies normalised text and a language code. The plugin calls its backend and returns audio bytes with their MIME type and file extension.
 
-## Required Interface
+## How HearMe Uses A Provider
 
-All providers implement `Drupal\hear_me\Plugin\TtsProvider\TtsProviderInterface`.
+HearMe discovers the available provider plugins and creates configured instances through Drupal's plugin manager. Plugin construction must remain lightweight: open network connections and perform expensive work only when synthesis is requested.
 
-Required methods:
+For a synthesis operation, HearMe:
 
-- `synthesize(string $text, string $lang): ?TtsSynthesisResult`: calls the external service and returns raw audio bytes + format metadata. Returns `null` when the backend fails or cannot generate usable audio.
-- `getSupportedLanguages(): array`: language codes this provider can handle, for example, `['en', 'uk']`.
-- `getLabel(): string`: human-readable name shown in the admin dropdown.
-- `getDefaultMimeType(): string`: MIME type for cache lookups, for example, `audio/wav`.
-- `getDefaultExtension(): string`: file extension without dot, for example, `wav`.
+1. Reads the active plugin ID from `hear_me.settings`.
+2. Loads configuration from `hear_me.provider.<plugin_id>`.
+3. Selects the active provider instance.
+4. Uses the provider's language and format metadata.
+5. Calls `synthesize($text, $lang)` when audio must be generated.
+6. Sends or stores the returned audio according to the playback or queue workflow.
 
-## Audio Result
+The plugin does not need to manage HearMe routes, access checks, global endpoint limits, cache files, File entities, Media entities, or queue workers.
 
-Return a `Drupal\hear_me\TtsSynthesisResult` with:
+Browser requests to `/hear-me/tts` pass through HearMe's endpoint validation. Queue workers and setup checks call synthesis through other trusted application paths. A provider must therefore apply its own backend-specific language, text, payload, response-size, timeout, and cost limits rather than assuming every caller passed through the browser endpoint validator.
 
-- Raw audio bytes.
-- MIME type, for example `audio/wav` or `audio/mpeg`.
-- Extension without the dot, for example `wav` or `mp3`.
+## Integration Checklist
 
-HearMe uses this metadata for response headers, file cache names, and managed File entities.
+1. Create a Drupal module that depends on HearMe.
+2. Add a class under `src/Plugin/TtsProvider`.
+3. Add the `#[TtsProvider]` attribute and implement `TtsProviderInterface`.
+4. Add provider install configuration and complete schema.
+5. Inject the backend client and implement bounded, validated synthesis.
+6. Implement `PluginFormInterface` if administrators need provider settings.
+7. Enable the module, rebuild caches, and select the provider in HearMe.
+8. Test discovery, configuration, backend failures, and browser playback.
 
-## Service Registration
+## Provider Types
 
-Register the provider in your module's services file:
+Choose the simplest type that fits the backend:
+
+- **Fixed provider:** the endpoint and supported languages are defined by code or injected services. Extend `PluginBase`.
+- **Configurable provider:** site administrators need provider-specific settings in the HearMe form. Extend `ConfigurablePluginBase` and implement `PluginFormInterface`.
+
+Both types implement `TtsProviderInterface` and use the `#[TtsProvider]` attribute.
+
+## Required Files
+
+A provider normally lives in its own custom or contributed Drupal module:
+
+```text
+mymodule/
+├── config/
+│   ├── install/
+│   │   └── hear_me.provider.example.yml
+│   └── schema/
+│       └── mymodule.schema.yml
+├── src/
+│   └── Plugin/
+│       └── TtsProvider/
+│           └── ExampleProvider.php
+└── mymodule.info.yml
+```
+
+Add a dependency on HearMe in `mymodule.info.yml`:
 
 ```yaml
-services:
-  mymodule.provider.mytts:
-    class: Drupal\mymodule\Plugin\TtsProvider\MyTtsProvider
-    arguments:
-      - '@http_client'
-      - '@config.factory'
-    tags:
-      - { name: hear_me.provider, provider_key: mytts }
+name: 'Example TTS Provider'
+type: module
+description: 'Connects HearMe to the Example TTS backend.'
+package: 'Text to speech'
+core_version_requirement: ^11
+dependencies:
+  - hear_me:hear_me
 ```
 
-The `provider_key` tag value is the machine name used in `hear_me.settings` and provider config names.
+## The Provider Attribute
 
-Clear caches after adding or changing provider services.
+Place provider classes under `src/Plugin/TtsProvider` and add the `TtsProvider` attribute:
 
-### Provider config namespace
-
-Each provider should store its settings in a config object named `hear_me.provider.<provider_key>`. The settings form and `HearMeService` resolve provider config by that naming convention. For example, the built-in Piper-compatible adapter uses `hear_me.provider.piper`.
-
-**Example: connecting a cloud API**
-
-The module is not tied to self-hosted services. A provider backed by a cloud TTS API (such as Google Cloud TTS, AWS Polly, or ElevenLabs) would look identical from the module's perspective — it just implements the same interface, makes its own HTTP calls inside `synthesize()`, and returns a `TtsSynthesisResult` with the audio bytes.
-
-### Configurable Providers
-
-If the provider has admin settings, also implement `Drupal\hear_me\Plugin\TtsProvider\TtsProviderConfigurableInterface`.
-
-That interface lets the provider add fields to the HearMe settings form and save its own configuration. Methods:
-
-`buildConfigForm(array $form, array $config)`: adds provider-specific fields to the settings form.
-`submitConfigForm(array &$form, FormStateInterface $form_state)`: saves those fields to config.
-
-Store provider settings in:
-
-```text
-hear_me.provider.<provider_key>
+```php
+#[TtsProvider(
+  id: 'example',
+  label: new TranslatableMarkup('Example TTS'),
+)]
 ```
 
-For example, Piper stores settings in:
+- `id` is the permanent machine name of the provider. Use lowercase letters, numbers, and underscores.
+- `label` is the translated name shown in the **Active TTS Provider** field.
 
-```text
-hear_me.provider.piper
+The plugin ID is also used in configuration names, cache identity, and saved active-provider settings. Choose it carefully and keep it stable.
+
+After adding or renaming a provider class, rebuild Drupal caches so discovery is refreshed:
+
+```bash
+drush cr
 ```
 
-Add a config schema for every provider config object so Drupal can validate and export it cleanly.
+Without Drush, use **Administration > Configuration > Development > Performance > Clear all caches**.
 
-### Provider-specific settings
+## The Provider Interface
 
-The lower section of the settings form shows fields specific to the selected provider. These fields change automatically when you switch the **Active TTS Provider** dropdown — no page reload needed. What appears there is entirely up to the provider implementation; it could be an endpoint URL, an API key, a model name, or any other value the provider needs.
+Every provider implements `Drupal\hear_me\Plugin\TtsProvider\TtsProviderInterface`.
 
-If a provider does not implement `TtsProviderConfigurableInterface`, no provider-specific section is shown in the settings form for that provider.
+| Method | Responsibility |
+|---|---|
+| `synthesize(string $text, string $lang): ?TtsSynthesisResult` | Generate audio. Return `NULL` when the backend cannot produce usable audio. |
+| `getSupportedLanguages(): array` | Return language codes accepted by the backend, such as `['en', 'uk']`. |
+| `getDefaultMimeType(): string` | Declare the provider's normal output MIME type, such as `audio/mpeg`. |
+| `getDefaultExtension(): string` | Return the normal extension without a dot, such as `mp3`. HearMe uses it when preparing cache filenames before synthesis. |
 
-## Switching providers
+Keep these format declarations consistent with successful synthesis results. In particular, a result extension must match `getDefaultExtension()` for persisted and cached workflows.
 
-1. Go to **Administration → Configuration → Media → HearMe TTS**.
-2. Change the **Active TTS Provider** dropdown to the desired provider.
-3. Fill in the provider-specific settings that appear below.
-4. Save. The new provider is active immediately for all subsequent synthesis requests.
+## Minimal Provider Example
 
-Only providers that are registered as tagged services in an enabled module appear in the dropdown. See [Provider system](#provider-system) for how to add one.
-
-## Minimal Provider Skeleton
+This example connects to a fixed HTTPS backend and uses Drupal's HTTP client through dependency injection:
 
 ```php
 <?php
 
+declare(strict_types=1);
+
 namespace Drupal\mymodule\Plugin\TtsProvider;
 
+use Drupal\Core\Logger\LoggerChannelFactoryInterface;
+use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
+use Drupal\Core\Plugin\PluginBase;
+use Drupal\Core\StringTranslation\TranslatableMarkup;
+use Drupal\hear_me\Attribute\TtsProvider;
 use Drupal\hear_me\Plugin\TtsProvider\TtsProviderInterface;
 use Drupal\hear_me\TtsSynthesisResult;
+use GuzzleHttp\ClientInterface;
+use GuzzleHttp\Exception\GuzzleException;
+use Psr\Log\LoggerInterface;
+use Symfony\Component\DependencyInjection\ContainerInterface;
 
-final class ExampleProvider implements TtsProviderInterface {
+#[TtsProvider(
+  id: 'example',
+  label: new TranslatableMarkup('Example TTS'),
+)]
+final class ExampleProvider extends PluginBase implements TtsProviderInterface, ContainerFactoryPluginInterface {
+
+  private const ENDPOINT = 'https://tts.example.com/v1/synthesize';
+
+  private const MAX_AUDIO_BYTES = 10485760;
+
+  private LoggerInterface $logger;
+
+  public function __construct(
+    array $configuration,
+    $plugin_id,
+    $plugin_definition,
+    private readonly ClientInterface $httpClient,
+    LoggerChannelFactoryInterface $loggerFactory,
+  ) {
+    parent::__construct($configuration, $plugin_id, $plugin_definition);
+    $this->logger = $loggerFactory->get('mymodule');
+  }
+
+  public static function create(ContainerInterface $container, array $configuration, $plugin_id, $plugin_definition): static {
+    return new static(
+      $configuration,
+      $plugin_id,
+      $plugin_definition,
+      $container->get('http_client'),
+      $container->get('logger.factory'),
+    );
+  }
 
   public function synthesize(string $text, string $lang): ?TtsSynthesisResult {
-    $bytes = $this->callBackend($text, $lang);
-    if ($bytes === '') {
+    try {
+      $response = $this->httpClient->request('POST', self::ENDPOINT, [
+        'json' => [
+          'text' => $text,
+          'lang' => $lang,
+        ],
+        'connect_timeout' => 5,
+        'timeout' => 30,
+        'allow_redirects' => FALSE,
+        'http_errors' => FALSE,
+        'stream' => TRUE,
+        'headers' => [
+          'Accept' => 'audio/mpeg',
+        ],
+      ]);
+    }
+    catch (GuzzleException $exception) {
+      $this->logger->warning('Example TTS request failed with @type.', [
+        '@type' => get_debug_type($exception),
+      ]);
+      return NULL;
+    }
+
+    $contentType = strtolower(trim(explode(';', $response->getHeaderLine('Content-Type'))[0]));
+    $body = $response->getBody();
+    if ($response->getStatusCode() !== 200 || $contentType !== 'audio/mpeg') {
+      $body->close();
+      $this->logger->warning('Example TTS returned an invalid audio response.');
+      return NULL;
+    }
+
+    $bytes = '';
+    $complete = FALSE;
+    try {
+      while (!$body->eof() && strlen($bytes) <= self::MAX_AUDIO_BYTES) {
+        $chunk = $body->read(min(8192, self::MAX_AUDIO_BYTES + 1 - strlen($bytes)));
+        if ($chunk === '') {
+          break;
+        }
+        $bytes .= $chunk;
+      }
+      $complete = $body->eof();
+    }
+    catch (\RuntimeException) {
+      $this->logger->warning('Example TTS audio response could not be read.');
+      return NULL;
+    }
+    finally {
+      $body->close();
+    }
+    if (
+      $bytes === ''
+      || strlen($bytes) > self::MAX_AUDIO_BYTES
+      || !$complete
+    ) {
+      $this->logger->warning('Example TTS returned an invalid audio response.');
       return NULL;
     }
 
@@ -113,11 +228,7 @@ final class ExampleProvider implements TtsProviderInterface {
   }
 
   public function getSupportedLanguages(): array {
-    return ['en'];
-  }
-
-  public function getLabel(): string {
-    return 'Example TTS';
+    return ['en', 'uk'];
   }
 
   public function getDefaultMimeType(): string {
@@ -128,81 +239,294 @@ final class ExampleProvider implements TtsProviderInterface {
     return 'mp3';
   }
 
-  private function callBackend(string $text, string $lang): string {
-    return '';
-  }
-
 }
 ```
 
-## Language handling
+`ContainerFactoryPluginInterface` is required only when the plugin needs services from Drupal's container. Keep the standard `$configuration`, `$plugin_id`, and `$plugin_definition` constructor arguments before injected dependencies.
 
-The `/hear-me/tts` endpoint validates the requested language against the active provider's supported language codes. It normalises case and underscores, accepts an exact supported code first, then tries the two-letter short code, for example `en-US` to `en`. Unsupported languages return `400 Unsupported language`.
+## Provider Configuration
 
-Language values come from these places:
+HearMe uses one configuration object per plugin:
 
-| Flow | Language source |
-|---|---|
-| Inline `<tts>` playback | The text filter writes `data-lang` on the generated button from the filter language code. If the language is missing or unspecified, it uses the provider's configured **Default Language**. |
-| Whole-page, selected text, and selected section playback | The block attaches `drupalSettings.hear_me.default_lang`. It uses the current Drupal interface language short code when the provider supports it, otherwise the provider's configured **Default Language**. |
-| Direct API requests | If `lang` is omitted or empty, the endpoint uses the provider's configured **Default Language**. |
-| Queue-based pre-generation | Insert, update, and backfill jobs use the node entity language. If it is unspecified, they use the provider's configured **Default Language**. |
-
-Provider modules should return every code they can synthesise from `getSupportedLanguages()`. Configurable providers should store their fallback language in the `default_lang` key of `hear_me.provider.<provider_key>`.
-
-### Enabling per-node language detection
-
-1. Enable the `language` and `content_translation` core modules.
-2. Add languages at **Administration → Configuration → Regional & language → Languages**.
-3. Enable language assignment for your content types at **Administration → Configuration → Regional & language → Content language and translation**.
-4. Set the **Language** field on each node before saving.
-
-## Cached audio files
-
-Runtime playback files are stored under `private://hear_me/tts/` by default. If **Runtime cache file storage** is changed to public, runtime files are stored at `public://tts/<hash>.<ext>` (typically `sites/default/files/tts/`). If caching is disabled, the source TTL is `0`, or the selected stream wrapper is unavailable, playback still works but the generated audio is returned directly and is not persisted.
-
-Queue-generated entity audio always uses `public://tts/<hash>.<ext>` because it is attached to content as Media. Enrolled nodes are queued on insert and when the configured source text or language changes. Each queue item includes a content hash derived from normalized source text, language, and source-field configuration, and the worker skips stale jobs before attaching Media.
-
-| Flow | File entity | Media entity | Cleanup behavior |
-|---|---|---|---|
-| Runtime playback (`inline`, `page`, `selection`, `adhoc`) | Created only when audio is persisted. | No. | Expired entries and entries over runtime file-count/size limits are purged by cron. The settings form can also clear tracked runtime cache entries. |
-| Queue pre-generation (`entity`) | Yes. | Yes, using the `hear_me_audio` media type. | Excluded from runtime cache TTL and size cleanup because it is attached to content. |
-
-HearMe cache IDs include:
-
-| Component | Purpose                                                                                                |
-|---|--------------------------------------------------------------------------------------------------------|
-| Source type | Separates `inline`, `page`, `selection`, `adhoc`, and `entity` requests.                               |
-| Storage key | Separates private and public runtime cache files. Queue-generated `entity` audio always uses `public`. |
-| Text hash | Separates different normalised text payloads without storing text in the cache ID.                     |
-| Language | Separates the same text synthesised in different languages.                                            |
-| Provider key | Separates providers.                                                                                   |
-| Audio extension | Separates output formats such as `wav` and `mp3`.                                                      |
-| Provider configuration hash | Separates audio generated before and after provider settings change.                                   |
-
-Runtime cache entries are purged by cron when they expire or when the configured file-count/total-size limits are exceeded. The settings form also includes **Clear generated runtime audio cache** for environments without Drush.
-
-Provider setting changes create new cache entries instead of reusing stale audio. If a remote model or voice file changes without a Drupal config change, clear the runtime cache from the settings form and regenerate queued media if needed.
-
-To manually clear the runtime audio cache with Drush:
-
-```bash
-drush php-eval "\Drupal::service('hear_me.cache_manager')->clearRuntimeCache();"
+```text
+hear_me.provider.<plugin_id>
 ```
 
-## Security Guidelines
+For the `example` plugin, the name is `hear_me.provider.example`.
 
-- Do not store API keys in plain config if the target site requires secret management. Use Drupal's key management patterns or environment-specific settings where appropriate.
-- Validate provider endpoint URLs and avoid credentials in URLs.
-- Set conservative timeouts for remote HTTP calls.
-- Log backend failures without logging the full text payload or secret values.
-- Respect HearMe's max request size and max text length before calling expensive backends.
+Every provider needs a `default_lang` value, even when it has no settings form. HearMe uses it when a request, page, or content entity does not supply a usable language.
 
-## Testing Providers
+Create `config/install/hear_me.provider.example.yml`:
 
-Recommended coverage for provider modules:
+```yaml
+default_lang: en
+```
 
-- Unit test language and extension/MIME metadata.
-- Kernel test provider service discovery through `hear_me.provider` tag.
-- Functional test settings form submit if the provider is configurable.
-- Failure-path test for backend errors returning `NULL`.
+Define every key in the provider module's configuration schema:
+
+```yaml
+hear_me.provider.example:
+  type: config_object
+  label: 'Example TTS provider settings'
+  mapping:
+    default_lang:
+      type: string
+      label: 'Default language code'
+```
+
+The module that supplies the provider owns its install configuration and schema.
+
+## Adding Provider Settings To HearMe
+
+Use a configurable provider when administrators need to set a voice, model, supported languages, or similar values.
+
+The provider must:
+
+1. Extend `Drupal\Core\Plugin\ConfigurablePluginBase`.
+2. Implement `Drupal\Core\Plugin\PluginFormInterface`.
+3. Build, validate, and submit its provider-specific fields.
+4. Call `setConfiguration()` with the complete normalized configuration during submission.
+
+HearMe embeds the plugin form under `provider_settings` and saves the resulting configuration to `hear_me.provider.<plugin_id>`.
+
+### Class Declaration
+
+Import `FormStateInterface`, `ConfigurablePluginBase`, `PluginFormInterface`, and `StringTranslationTrait`, then add the trait to the provider class:
+
+```php
+final class ExampleProvider extends ConfigurablePluginBase implements TtsProviderInterface, ContainerFactoryPluginInterface, PluginFormInterface {
+
+  use StringTranslationTrait;
+```
+
+Relevant imports:
+
+```php
+use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Plugin\ConfigurablePluginBase;
+use Drupal\Core\Plugin\PluginFormInterface;
+use Drupal\Core\StringTranslation\StringTranslationTrait;
+```
+
+The constructor and `create()` method follow the same dependency-injection pattern as the minimal example.
+
+### Build The Settings Form
+
+```php
+public function buildConfigurationForm(array $form, FormStateInterface $form_state): array {
+  $form['voice'] = [
+    '#type' => 'textfield',
+    '#title' => $this->t('Voice'),
+    '#default_value' => $this->configuration['voice'] ?? 'standard',
+    '#required' => TRUE,
+  ];
+  $form['supported_langs'] = [
+    '#type' => 'textfield',
+    '#title' => $this->t('Supported language codes'),
+    '#default_value' => implode(', ', $this->configuration['supported_langs'] ?? ['en']),
+    '#description' => $this->t('Comma-separated values, for example: en, uk.'),
+    '#required' => TRUE,
+  ];
+  $form['default_lang'] = [
+    '#type' => 'textfield',
+    '#title' => $this->t('Default language code'),
+    '#default_value' => $this->configuration['default_lang'] ?? 'en',
+    '#required' => TRUE,
+  ];
+  return $form;
+}
+```
+
+HearMe passes a `SubformState` as the `FormStateInterface`. During validation and submission, read values relative to the provider form:
+
+```php
+$voice = $form_state->getValue('voice');
+```
+
+Do not use `provider_settings` as an additional value prefix inside the plugin.
+
+On the initial build, Form API has not assigned `#parents` and `#array_parents` yet. If the initial form structure depends on those properties or submitted subform values, return an element with a `#process` callback and build the dependent elements there, as described by Drupal's `PluginFormInterface` contract. Forms that use only instance configuration for initial defaults can build fields directly.
+
+### Validate Settings
+
+```php
+public function validateConfigurationForm(array &$form, FormStateInterface $form_state): void {
+  $supported = array_values(array_filter(array_map(
+    'trim',
+    explode(',', (string) $form_state->getValue('supported_langs')),
+  )));
+  $default = trim((string) $form_state->getValue('default_lang'));
+
+  if (!in_array($default, $supported, TRUE)) {
+    $form_state->setErrorByName('default_lang', $this->t('The default language must be included in the supported languages.'));
+  }
+}
+```
+
+Validate voice names, model names, language codes, and any other backend-specific values before saving them.
+
+### Store Normalized Instance Configuration
+
+```php
+public function submitConfigurationForm(array &$form, FormStateInterface $form_state): void {
+  $supported = array_values(array_filter(array_map(
+    'trim',
+    explode(',', (string) $form_state->getValue('supported_langs')),
+  )));
+
+  $this->setConfiguration([
+    'voice' => trim((string) $form_state->getValue('voice')),
+    'supported_langs' => $supported,
+    'default_lang' => trim((string) $form_state->getValue('default_lang')),
+  ]);
+}
+```
+
+The provider updates its instance configuration. HearMe performs the configuration save.
+
+### Install Defaults And Schema
+
+Create complete defaults:
+
+```yaml
+voice: standard
+supported_langs:
+  - en
+default_lang: en
+```
+
+Extend the schema to match:
+
+```yaml
+hear_me.provider.example:
+  type: config_object
+  label: 'Example TTS provider settings'
+  mapping:
+    voice:
+      type: string
+      label: 'Voice identifier'
+    supported_langs:
+      type: sequence
+      label: 'Supported language codes'
+      sequence:
+        type: string
+        label: 'Language code'
+    default_lang:
+      type: string
+      label: 'Default language code'
+```
+
+Configuration schema must describe every stored key. Do not add secrets to install configuration or exported active configuration.
+
+## Runtime Overrides And Secrets
+
+Runtime plugin instances receive effective Drupal configuration, including overrides from `settings.php`. The settings form reads and saves active configuration without exposing or copying overridden values.
+
+An environment-specific override can use:
+
+```php
+$config['hear_me.provider.example']['voice'] = 'environment-specific-voice';
+```
+
+For credentials and API tokens, prefer a Key module reference, platform secret storage, or an injected secret resolver. Resolve the secret only when making the backend request.
+
+Never:
+
+- Put real credentials in install configuration, schema examples, tests, or documentation.
+- Render secrets in the provider settings form.
+- Include credentials, authorization headers, synthesis text, or full sensitive URLs in logs.
+
+HearMe's cache identity includes a hash of stored provider configuration. After changing only an overridden endpoint, voice, model, or secret, clear the generated runtime audio cache and regenerate queued media when necessary.
+
+## Language Handling
+
+Return every language code the backend accepts from `getSupportedLanguages()`.
+
+For browser requests to `/hear-me/tts`, HearMe normalizes case and underscores, accepts an exact supported value first, and then tries its two-letter form. For example, `en-US` can fall back to `en` when `en` is supported. Providers should still reject unsupported languages defensively because queue and setup paths do not use the browser endpoint validator.
+
+Use consistent language codes in:
+
+- `getSupportedLanguages()`
+- `supported_langs` configuration, when configurable
+- `default_lang` configuration
+- Requests sent to the backend
+
+## Audio And Error Handling
+
+A successful provider result contains:
+
+```php
+new TtsSynthesisResult($bytes, 'audio/mpeg', 'mp3');
+```
+
+Provider implementations should:
+
+- Enforce backend-specific text and payload limits on every synthesis path.
+- Use bounded connection and request timeouts.
+- Bound the audio response size before reading the complete body into memory.
+- Disable redirects unless they are explicitly required and validated.
+- Verify the HTTP status, response MIME type, and non-empty audio body.
+- Return `NULL` for expected backend failures instead of exposing them to the user as uncaught exceptions.
+- Log enough information to diagnose the backend without logging text or secrets.
+- Keep the declared MIME type and extension consistent with the returned bytes.
+
+If administrators can configure a URL, treat it as a server-side request target. Prefer an explicit host allowlist. At minimum, validate schemes, credentials, fragments, metadata-service addresses, localhost, and private or reserved IP literals. If hostnames can resolve to private networks, account for DNS resolution and rebinding at the network or client boundary as well.
+
+## Enable And Select The Provider
+
+After the provider module is enabled and caches are rebuilt:
+
+1. Go to **Administration > Configuration > Media > HearMe TTS**.
+2. Select the provider under **Active TTS Provider**.
+3. Complete its provider-specific settings, if present.
+4. Save the form.
+5. Use **Test provider connection**.
+6. Test browser playback and any enabled queue-generation workflow.
+
+Only plugins supplied by enabled modules and discovered successfully appear in the provider list.
+
+## Testing A Provider Module
+
+Recommended coverage:
+
+- **Kernel discovery test:** enable the provider module, clear discovery, assert the plugin ID, label, and class through `plugin.manager.hear_me.tts_provider`, and create an instance.
+- **Unit or kernel synthesis test:** verify dependency injection, request options, language values, success, timeout/failure handling, MIME type, and extension.
+- **Configuration schema test:** validate every install-config key against the provider module's schema.
+- **Functional settings test:** verify field parents, accepted and rejected values, normalization, persistence, and unchanged configuration after validation errors.
+- **AJAX or browser test:** switch providers and verify the provider settings section rebuilds without a page reload.
+- **Integration test:** use Drupal's `/hear-me/tts` endpoint and confirm playable audio, expected cache headers, and no page reload.
+
+Tests should use a fake HTTP response or deterministic test backend. They should not require production credentials, paid requests, or real voice models.
+
+## Troubleshooting
+
+### The provider does not appear
+
+- Confirm the provider module is enabled.
+- Confirm the class is under `src/Plugin/TtsProvider`.
+- Confirm the namespace matches the module and directory.
+- Confirm the `#[TtsProvider]` attribute and plugin ID are valid.
+- Confirm the class implements `TtsProviderInterface`.
+- Rebuild Drupal caches.
+
+### The settings form is empty
+
+- Confirm the provider implements both `ConfigurableInterface` and `PluginFormInterface`.
+- Confirm `buildConfigurationForm()` returns the form array.
+- Read submitted values relative to the provided `SubformState`.
+
+### Settings do not save
+
+- Confirm `submitConfigurationForm()` calls `setConfiguration()` with the complete configuration array.
+- Confirm every stored key has configuration schema.
+- Check form validation errors and Drupal logs.
+
+### Synthesis returns no audio
+
+- Confirm the selected language is returned by `getSupportedLanguages()`.
+- Confirm the effective endpoint and environment overrides are correct.
+- Confirm Drupal can reach the backend from the server or container network.
+- Confirm the backend returns the expected audio MIME type and non-empty bytes.
+- Review Drupal logs for a redacted provider error.
+
+For a concrete bundled implementation, see `Drupal\hear_me\Plugin\TtsProvider\PiperProvider` and the provider tests. Apply the validation, response bounds, privacy controls, and backend-specific hardening required by your own integration.

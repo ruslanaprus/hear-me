@@ -5,13 +5,14 @@ declare(strict_types=1);
 namespace Drupal\Tests\hear_me\Kernel;
 
 use Drupal\hear_me\Plugin\TtsProvider\PiperProvider;
+use Drupal\hear_me\Plugin\TtsProvider\TtsProviderManager;
 use Drupal\hear_me_test\Plugin\TtsProvider\TestProvider;
 use Drupal\KernelTests\KernelTestBase;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 
 /**
- * Tests tagged TTS provider discovery and active provider behavior.
+ * Tests TTS provider plugin discovery and active provider behavior.
  */
 #[Group('hear_me')]
 #[RunTestsInSeparateProcesses]
@@ -42,21 +43,82 @@ class HearMeProviderTest extends KernelTestBase {
   }
 
   /**
-   * Tests tagged providers are discovered and built by the container.
+   * Tests attribute providers are discovered with their plugin definitions.
    */
-  public function testTaggedProviderDiscoveryAndConstruction(): void {
-    $providers = $this->container->get('hear_me.service')->getProviders();
+  public function testAttributeProviderDiscoveryAndConstruction(): void {
+    $manager = $this->container->get('plugin.manager.hear_me.tts_provider');
+    $this->assertInstanceOf(TtsProviderManager::class, $manager);
+    $definitions = $manager->getDefinitions();
 
-    $this->assertCount(2, $providers);
-    $this->assertArrayHasKey('piper', $providers);
-    $this->assertInstanceOf(PiperProvider::class, $providers['piper']);
-    $this->assertArrayHasKey('test', $providers);
-    $this->assertInstanceOf(TestProvider::class, $providers['test']);
+    $this->assertArrayHasKey('piper', $definitions);
+    $this->assertArrayHasKey('test', $definitions);
+    $this->assertSame('piper', $definitions['piper']['id']);
+    $this->assertSame('Piper (self-hosted)', (string) $definitions['piper']['label']);
+    $this->assertSame(PiperProvider::class, $definitions['piper']['class']);
+    $this->assertSame('test', $definitions['test']['id']);
+    $this->assertSame('Test provider', (string) $definitions['test']['label']);
+    $this->assertSame(TestProvider::class, $definitions['test']['class']);
+    $this->assertInstanceOf(PiperProvider::class, $manager->createInstance('piper', []));
+    $this->assertInstanceOf(TestProvider::class, $manager->createInstance('test'));
+  }
+
+  /**
+   * Tests instances retain snapshots while the service uses effective config.
+   */
+  public function testProviderConfigurationSnapshotsAndEffectiveConfig(): void {
+    $manager = $this->container->get('plugin.manager.hear_me.tts_provider');
+    $snapshot = $manager->createInstance('piper', [
+      'endpoint' => 'https://snapshot.example.com/tts',
+      'default_lang' => 'fr',
+      'supported_langs' => ['fr'],
+    ]);
+    $this->assertInstanceOf(PiperProvider::class, $snapshot);
+    $this->assertSame('piper', $snapshot->getPluginId());
+    $this->assertSame('https://snapshot.example.com/tts', $snapshot->getConfiguration()['endpoint']);
+    $this->assertSame(['fr'], $snapshot->getSupportedLanguages());
 
     $this->config('hear_me.provider.piper')
-      ->set('supported_langs', ['fr', 'de'])
+      ->set('endpoint', 'https://effective.example.com/tts')
+      ->set('supported_langs', ['de'])
       ->save();
-    $this->assertSame(['fr', 'de'], $providers['piper']->getSupportedLanguages());
+
+    $this->assertSame(['fr'], $snapshot->getSupportedLanguages());
+    $provider = $this->container->get('hear_me.service')->getProviders()['piper'];
+    $this->assertNotSame($snapshot, $provider);
+    $this->assertSame('https://effective.example.com/tts', $provider->getConfiguration()['endpoint']);
+    $this->assertSame(['de'], $provider->getSupportedLanguages());
+
+    $this->config('hear_me.provider.piper')
+      ->set('supported_langs', ['uk'])
+      ->save();
+    $this->assertSame(['uk'], $this->container->get('hear_me.service')->getSupportedLanguages());
+    $this->assertSame(['fr'], $snapshot->getSupportedLanguages());
+  }
+
+  /**
+   * Tests runtime plugin instances receive configuration overrides.
+   */
+  public function testRuntimeProviderUsesEffectiveConfigurationOverride(): void {
+    $this->config('hear_me.provider.piper')
+      ->set('supported_langs', ['en'])
+      ->save();
+    $service = $this->container->get('hear_me.service');
+    $tokenBeforeOverride = $service->buildCacheToken('Override identity', 'en', 'inline');
+    $effectiveConfig = $this->container
+      ->get('config.factory')
+      ->get('hear_me.provider.piper');
+    $effectiveConfig->setSettingsOverride(['supported_langs' => ['es']]);
+
+    $provider = $service->getProviders()['piper'];
+
+    $this->assertSame(['es'], $provider->getSupportedLanguages());
+    $this->assertSame(['en'], $this->config('hear_me.provider.piper')->get('supported_langs'));
+    $this->assertSame($tokenBeforeOverride, $service->buildCacheToken('Override identity', 'en', 'inline'));
+
+    $this->config('hear_me.provider.piper')
+      ->set('supported_langs', ['fr'])
+      ->save();
+    $this->assertNotSame($tokenBeforeOverride, $service->buildCacheToken('Override identity', 'en', 'inline'));
   }
 
   /**

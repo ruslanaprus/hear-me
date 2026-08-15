@@ -26,7 +26,7 @@ The service must return:
 Content-Type: audio/wav
 ```
 
-The response `Content-Type` must start with `audio/`. The built-in adapter treats Piper-compatible output as WAV only. Other providers can return other formats by implementing the provider interface and reporting a different MIME type and extension.
+The response `Content-Type` must start with `audio/`. The built-in adapter treats Piper-compatible output as WAV only. Other provider plugins can return other formats by implementing the provider interface and reporting a different MIME type and extension.
 
 ## Endpoint Configuration
 

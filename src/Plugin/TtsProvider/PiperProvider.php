@@ -3,54 +3,77 @@
 namespace Drupal\hear_me\Plugin\TtsProvider;
 
 use Drupal\Component\Utility\UrlHelper;
-use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Language\LanguageManagerInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
+use Drupal\Core\Plugin\ConfigurablePluginBase;
+use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
+use Drupal\Core\Plugin\PluginFormInterface;
 use Drupal\Core\StringTranslation\StringTranslationTrait;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
+use Drupal\hear_me\Attribute\TtsProvider;
 use Drupal\hear_me\TtsSynthesisResult;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
+use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
  * TTS provider adapter for a Piper-compatible HTTP service.
  */
-class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInterface {
+#[TtsProvider(
+  id: 'piper',
+  label: new TranslatableMarkup('Piper (self-hosted)'),
+)]
+class PiperProvider extends ConfigurablePluginBase implements TtsProviderInterface, ContainerFactoryPluginInterface, PluginFormInterface {
 
   use StringTranslationTrait;
 
   protected ClientInterface $httpClient;
-  protected ConfigFactoryInterface $configFactory;
   protected LanguageManagerInterface $languageManager;
   protected $logger;
 
   /**
    * Constructs a PiperProvider instance.
    *
+   * @param array $configuration
+   *   The plugin configuration.
+   * @param string $plugin_id
+   *   The plugin ID.
+   * @param mixed $plugin_definition
+   *   The plugin definition.
    * @param \GuzzleHttp\ClientInterface $http_client
    *   The HTTP client.
-   * @param \Drupal\Core\Config\ConfigFactoryInterface $config_factory
-   *   The config factory.
    * @param \Drupal\Core\Language\LanguageManagerInterface $language_manager
    *   The language manager.
    * @param \Drupal\Core\Logger\LoggerChannelFactoryInterface $logger_factory
    *   The logger channel factory.
    */
   public function __construct(
+    array $configuration,
+    $plugin_id,
+    $plugin_definition,
     ClientInterface $http_client,
-    ConfigFactoryInterface $config_factory,
     LanguageManagerInterface $language_manager,
     LoggerChannelFactoryInterface $logger_factory,
   ) {
+    parent::__construct($configuration, $plugin_id, $plugin_definition);
     $this->httpClient        = $http_client;
-    $this->configFactory     = $config_factory;
     $this->languageManager   = $language_manager;
     $this->logger            = $logger_factory->get('hear_me');
   }
 
-  public function getLabel(): string {
-    return 'Piper (self-hosted)';
+  /**
+   * {@inheritdoc}
+   */
+  public static function create(ContainerInterface $container, array $configuration, $plugin_id, $plugin_definition): static {
+    return new static(
+      $configuration,
+      $plugin_id,
+      $plugin_definition,
+      $container->get('http_client'),
+      $container->get('language_manager'),
+      $container->get('logger.factory'),
+    );
   }
 
   public function getDefaultMimeType(): string {
@@ -62,22 +85,25 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
   }
 
   public function getSupportedLanguages(): array {
-    $langs = $this->configFactory->get('hear_me.provider.piper')->get('supported_langs');
+    $langs = $this->configuration['supported_langs'] ?? NULL;
     return is_array($langs) && !empty($langs) ? $langs : ['en'];
   }
 
-  public function buildConfigForm(array $form, array $config): array {
+  /**
+   * {@inheritdoc}
+   */
+  public function buildConfigurationForm(array $form, FormStateInterface $form_state): array {
     $form['allow_private_endpoint_urls'] = [
       '#type' => 'checkbox',
       '#title' => $this->t('Allow local/private provider endpoints'),
-      '#default_value' => $config['allow_private_endpoint_urls'] ?? FALSE,
+      '#default_value' => $this->configuration['allow_private_endpoint_urls'] ?? FALSE,
       '#description' => $this->t('Keep disabled unless the Piper-compatible service intentionally runs on a trusted loopback, private, link-local, or reserved IP address. Docker/DDEV service names such as piper-service are hostnames and do not require this option.'),
     ];
 
     $form['endpoint'] = [
       '#type'          => 'url',
       '#title'         => $this->t('Piper Endpoint URL'),
-      '#default_value' => $config['endpoint'] ?? '',
+      '#default_value' => $this->configuration['endpoint'] ?? '',
       '#description'   => $this->t('Full URL of a Piper-compatible HTTP TTS endpoint. Drupal sends server-side HTTP POST requests to this URL, so use only endpoints you control or trust. Do not point it at user-supplied URLs or sensitive internal metadata services.'),
       '#required'      => TRUE,
       '#element_validate' => [[static::class, 'validateEndpointElement']],
@@ -86,7 +112,7 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
     $form['supported_langs'] = [
       '#type'          => 'textfield',
       '#title'         => $this->t('Supported Language Codes'),
-      '#default_value' => implode(', ', $config['supported_langs'] ?? ['en']),
+      '#default_value' => implode(', ', $this->configuration['supported_langs'] ?? ['en']),
       '#description'   => $this->t('Comma-separated list of language codes this provider supports (e.g. <code>en, uk</code>). Must match the voice files installed on the Piper service.'),
       '#required'      => TRUE,
     ];
@@ -104,24 +130,29 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
       '#type'          => 'select',
       '#title'         => $this->t('Default Language'),
       '#options'       => $langOptions,
-      '#default_value' => $config['default_lang'] ?? 'en',
+      '#default_value' => $this->configuration['default_lang'] ?? 'en',
     ];
 
     return $form;
   }
 
-  public function submitConfigForm(array &$form, FormStateInterface $form_state): void {
-    $providerSettings = $form_state->getValue('provider_settings') ?? [];
-    $rawLangs = $providerSettings['supported_langs'] ?? $form_state->getValue('supported_langs') ?? '';
-    $langs = array_values(array_filter(array_map('trim', explode(',', $rawLangs))));
-    $endpoint = trim((string) ($providerSettings['endpoint'] ?? $form_state->getValue('endpoint') ?? ''));
+  /**
+   * {@inheritdoc}
+   */
+  public function validateConfigurationForm(array &$form, FormStateInterface $form_state): void {}
 
-    $this->configFactory->getEditable('hear_me.provider.piper')
-      ->set('endpoint',        $endpoint)
-      ->set('allow_private_endpoint_urls', (bool) ($providerSettings['allow_private_endpoint_urls'] ?? $form_state->getValue('allow_private_endpoint_urls') ?? FALSE))
-      ->set('default_lang',    $providerSettings['default_lang'] ?? $form_state->getValue('default_lang'))
-      ->set('supported_langs', $langs)
-      ->save();
+  /**
+   * {@inheritdoc}
+   */
+  public function submitConfigurationForm(array &$form, FormStateInterface $form_state): void {
+    $rawLangs = $form_state->getValue('supported_langs') ?? '';
+    $langs = array_values(array_filter(array_map('trim', explode(',', $rawLangs))));
+    $this->setConfiguration([
+      'endpoint' => trim((string) ($form_state->getValue('endpoint') ?? '')),
+      'allow_private_endpoint_urls' => (bool) ($form_state->getValue('allow_private_endpoint_urls') ?? FALSE),
+      'default_lang' => $form_state->getValue('default_lang'),
+      'supported_langs' => $langs,
+    ]);
   }
 
   public static function validateEndpointElement(array &$element, FormStateInterface $form_state, array &$complete_form): void {
@@ -204,9 +235,8 @@ class PiperProvider implements TtsProviderInterface, TtsProviderConfigurableInte
    * watchdog without crashing the caller.
    */
   public function synthesize(string $text, string $lang): ?TtsSynthesisResult {
-    $config   = $this->configFactory->get('hear_me.provider.piper');
-    $endpoint = trim((string) $config->get('endpoint'));
-    $allowPrivateEndpointUrls = (bool) ($config->get('allow_private_endpoint_urls') ?? FALSE);
+    $endpoint = trim((string) ($this->configuration['endpoint'] ?? ''));
+    $allowPrivateEndpointUrls = (bool) ($this->configuration['allow_private_endpoint_urls'] ?? FALSE);
     $validationError = $endpoint === ''
       ? new TranslatableMarkup('The Piper-compatible endpoint is empty.')
       : static::getEndpointValidationError($endpoint, $allowPrivateEndpointUrls);

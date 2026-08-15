@@ -11,7 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Drupal 11 text-to-speech playback endpoint at `/hear-me/tts`.
 - Inline `<tts>...</tts>` text filter with generated speaker controls.
 - Floating "Listen to this page" block with whole-page, selected-text, and section selection playback.
-- Provider system based on tagged Drupal services.
+- Attribute-discovered TTS provider plugin system with provider-owned configuration forms.
 - Built-in Piper-compatible HTTP adapter.
 - Runtime audio cache metadata table with private/public file storage support.
 - Flood API rate limits and daily/monthly quotas for synthesis requests.

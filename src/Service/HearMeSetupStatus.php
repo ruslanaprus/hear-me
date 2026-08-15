@@ -60,7 +60,7 @@ class HearMeSetupStatus {
     $providers = $this->ttsService->getProviders();
 
     if ($providerKey === '' || !isset($providers[$providerKey])) {
-      return $this->storeProviderConnectionResult($providerKey, 'error', (string) $this->t('The configured provider is missing or not registered.'));
+      return $this->storeProviderConnectionResult($providerKey, 'error', (string) $this->t('The configured provider plugin is missing or not discoverable.'));
     }
 
     $provider = $providers[$providerKey];
@@ -86,21 +86,22 @@ class HearMeSetupStatus {
     $providers = $this->ttsService->getProviders();
 
     if ($providerKey === '') {
-      return $this->item('provider_configured', $this->t('Provider configured'), 'error', $this->t('Missing'), $this->t('No active provider is configured.'));
+      return $this->item('provider_configured', $this->t('Provider plugin configured'), 'error', $this->t('Missing'), $this->t('No active provider plugin is configured.'));
     }
 
     if (!isset($providers[$providerKey])) {
-      return $this->item('provider_configured', $this->t('Provider configured'), 'error', $this->t('Failed'), $this->t('Provider @provider is configured but is not registered as a service.', ['@provider' => $providerKey]));
+      return $this->item('provider_configured', $this->t('Provider plugin configured'), 'error', $this->t('Failed'), $this->t('Provider plugin @provider is configured but is not discoverable.', ['@provider' => $providerKey]));
     }
 
-    return $this->item('provider_configured', $this->t('Provider configured'), 'ok', $this->t('OK'), $this->t('@provider is active.', ['@provider' => $providers[$providerKey]->getLabel()]));
+    $definition = $providers[$providerKey]->getPluginDefinition();
+    return $this->item('provider_configured', $this->t('Provider plugin configured'), 'ok', $this->t('OK'), $this->t('@provider plugin is active.', ['@provider' => $definition['label']]));
   }
 
   protected function getProviderConnectionStatus(): array {
     $providerKey = $this->getConfiguredProviderKey();
     $last = $this->state->get(self::PROVIDER_TEST_STATE_KEY, []);
     if (($last['provider'] ?? '') !== $providerKey || ($last['config_hash'] ?? '') !== $this->getProviderConfigHash($providerKey) || empty($last['checked'])) {
-      return $this->item('provider_connection', $this->t('Provider connection'), 'warning', $this->t('Not tested'), $this->t('Use the Test provider connection button after saving provider settings.'));
+      return $this->item('provider_connection', $this->t('Provider plugin connection'), 'warning', $this->t('Not tested'), $this->t('Use the Test provider connection button after saving provider plugin settings.'));
     }
 
     $checked = $this->dateFormatter->format((int) $last['checked'], 'short');
@@ -111,7 +112,7 @@ class HearMeSetupStatus {
 
     return $this->item(
       'provider_connection',
-      $this->t('Provider connection'),
+      $this->t('Provider plugin connection'),
       ($last['status'] ?? '') === 'ok' ? 'ok' : 'error',
       ($last['status'] ?? '') === 'ok' ? $this->t('OK') : $this->t('Failed'),
       $message,

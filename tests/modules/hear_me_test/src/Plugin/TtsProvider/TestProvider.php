@@ -4,13 +4,20 @@ declare(strict_types=1);
 
 namespace Drupal\hear_me_test\Plugin\TtsProvider;
 
+use Drupal\Core\Plugin\PluginBase;
+use Drupal\Core\StringTranslation\TranslatableMarkup;
+use Drupal\hear_me\Attribute\TtsProvider;
 use Drupal\hear_me\Plugin\TtsProvider\TtsProviderInterface;
 use Drupal\hear_me\TtsSynthesisResult;
 
 /**
  * Deterministic TTS provider used by automated tests.
  */
-class TestProvider implements TtsProviderInterface {
+#[TtsProvider(
+  id: 'test',
+  label: new TranslatableMarkup('Test provider'),
+)]
+class TestProvider extends PluginBase implements TtsProviderInterface {
 
   /**
    * {@inheritdoc}
@@ -24,13 +31,6 @@ class TestProvider implements TtsProviderInterface {
    */
   public function getSupportedLanguages(): array {
     return ['en'];
-  }
-
-  /**
-   * {@inheritdoc}
-   */
-  public function getLabel(): string {
-    return 'Test provider';
   }
 
   /**

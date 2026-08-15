@@ -57,7 +57,10 @@ class HearMeSettingsFormTest extends BrowserTestBase {
     $this->assertSame('public', $this->config('hear_me.settings')->get('runtime_cache_scheme'));
     $this->assertSame(4000, $this->config('hear_me.settings')->get('max_text_length'));
     $this->assertSame('https://tts.example.com/tts', $this->config('hear_me.provider.piper')->get('endpoint'));
+    $this->assertFalse($this->config('hear_me.provider.piper')->get('allow_private_endpoint_urls'));
+    $this->assertSame('en', $this->config('hear_me.provider.piper')->get('default_lang'));
     $this->assertSame(['en', 'uk'], $this->config('hear_me.provider.piper')->get('supported_langs'));
+    $savedProviderConfig = $this->config('hear_me.provider.piper')->getRawData();
 
     $this->submitForm([
       'provider_settings[endpoint]' => 'http://127.0.0.1:5000/tts',
@@ -65,8 +68,7 @@ class HearMeSettingsFormTest extends BrowserTestBase {
     ], 'Save configuration');
 
     $this->assertSession()->pageTextContains('Loopback, private, link-local, multicast, and reserved IP endpoint URLs are blocked by default.');
-    $this->assertSame('https://tts.example.com/tts', $this->config('hear_me.provider.piper')->get('endpoint'));
-    $this->assertFalse($this->config('hear_me.provider.piper')->get('allow_private_endpoint_urls'));
+    $this->assertSame($savedProviderConfig, $this->config('hear_me.provider.piper')->getRawData());
 
     $this->submitForm([
       'provider_settings[endpoint]' => 'http://127.0.0.1:5000/tts',
@@ -85,6 +87,32 @@ class HearMeSettingsFormTest extends BrowserTestBase {
     $this->assertSession()->pageTextContains('Loopback, private, link-local, multicast, and reserved IP endpoint URLs are blocked by default.');
     $this->assertSame('http://127.0.0.1:5000/tts', $this->config('hear_me.provider.piper')->get('endpoint'));
     $this->assertTrue($this->config('hear_me.provider.piper')->get('allow_private_endpoint_urls'));
+  }
+
+  /**
+   * Tests runtime overrides are not exposed or copied into active config.
+   */
+  public function testProviderFormDoesNotPersistRuntimeOverride(): void {
+    $this->config('hear_me.provider.piper')
+      ->set('endpoint', 'https://stored.example.com/tts')
+      ->save();
+    $settings['config']['hear_me.provider.piper']['endpoint'] = (object) [
+      'value' => 'https://override.example.com/tts',
+      'required' => TRUE,
+    ];
+    $this->writeSettings($settings);
+    $admin = $this->drupalCreateUser(['administer hear me']);
+    $this->drupalLogin($admin);
+
+    $this->drupalGet('/admin/config/media/hear-me');
+    $this->assertSession()->fieldValueEquals('provider_settings[endpoint]', 'https://stored.example.com/tts');
+    $this->submitForm([
+      'provider_settings[endpoint]' => 'https://submitted.example.com/tts',
+    ], 'Save configuration');
+
+    $this->assertSession()->pageTextContains('The configuration options have been saved.');
+    $this->assertSame('https://submitted.example.com/tts', $this->config('hear_me.provider.piper')->get('endpoint'));
+    $this->assertSession()->fieldValueEquals('provider_settings[endpoint]', 'https://submitted.example.com/tts');
   }
 
   /**

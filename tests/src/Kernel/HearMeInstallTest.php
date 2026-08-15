@@ -6,6 +6,8 @@ namespace Drupal\Tests\hear_me\Kernel;
 
 use Drupal\KernelTests\KernelTestBase;
 use Drupal\Tests\SchemaCheckTestTrait;
+use Drupal\hear_me\Plugin\TtsProvider\PiperProvider;
+use Drupal\hear_me\Plugin\TtsProvider\TtsProviderManager;
 use Drupal\hear_me\Plugin\QueueWorker\HearMeQueueWorker;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
@@ -83,6 +85,29 @@ class HearMeInstallTest extends KernelTestBase {
     $this->assertSame('HearMe TTS Queue Worker', (string) $definition['title']);
     $this->assertSame(30, $definition['cron']['time']);
     $this->assertInstanceOf(HearMeQueueWorker::class, $manager->createInstance('hear_me_tts'));
+  }
+
+  /**
+   * Tests provider manager installation, discovery, and cache rebuilding.
+   */
+  public function testProviderManagerDiscoveryAndCacheClear(): void {
+    $this->container->get('module_installer')->install(['hear_me']);
+    $this->container = \Drupal::getContainer();
+
+    $manager = $this->container->get('plugin.manager.hear_me.tts_provider');
+    $this->assertInstanceOf(TtsProviderManager::class, $manager);
+    $definitions = $manager->getDefinitions();
+    $this->assertSame(['piper'], array_keys($definitions));
+    $this->assertSame('piper', $definitions['piper']['id']);
+    $this->assertSame('Piper (self-hosted)', (string) $definitions['piper']['label']);
+    $this->assertSame(PiperProvider::class, $definitions['piper']['class']);
+
+    $manager->clearCachedDefinitions();
+    $rebuiltDefinitions = $manager->getDefinitions();
+    $this->assertSame(['piper'], array_keys($rebuiltDefinitions));
+    $this->assertSame('Piper (self-hosted)', (string) $rebuiltDefinitions['piper']['label']);
+    $this->assertSame(PiperProvider::class, $rebuiltDefinitions['piper']['class']);
+    $this->assertInstanceOf(PiperProvider::class, $manager->createInstance('piper', []));
   }
 
 }

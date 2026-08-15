@@ -8,6 +8,7 @@ use Drupal\Core\Entity\RevisionableInterface;
 use Drupal\Core\Lock\LockBackendInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\Core\PrivateKey;
+use Drupal\hear_me\Plugin\TtsProvider\TtsProviderManager;
 use Drupal\hear_me\TtsAudioResult;
 use Drupal\hear_me\TtsSynthesisResult;
 use Drupal\media\Entity\Media;
@@ -17,7 +18,7 @@ use Drupal\node\NodeInterface;
 class HearMeService {
 
   protected ConfigFactoryInterface $configFactory;
-  protected iterable $providers;
+  protected TtsProviderManager $providerManager;
   protected EntityTypeManagerInterface $entityTypeManager;
   protected TtsFileHelperInterface $fileHelper;
   protected TtsCacheManager $cacheManager;
@@ -27,7 +28,7 @@ class HearMeService {
 
   public function __construct(
     ConfigFactoryInterface $configFactory,
-    iterable $providers,
+    TtsProviderManager $providerManager,
     EntityTypeManagerInterface $entityTypeManager,
     TtsFileHelperInterface $fileHelper,
     TtsCacheManager $cacheManager,
@@ -36,7 +37,7 @@ class HearMeService {
     PrivateKey $privateKey,
   ) {
     $this->configFactory     = $configFactory;
-    $this->providers         = $providers;
+    $this->providerManager   = $providerManager;
     $this->entityTypeManager = $entityTypeManager;
     $this->fileHelper        = $fileHelper;
     $this->cacheManager      = $cacheManager;
@@ -102,7 +103,7 @@ class HearMeService {
     }
 
     $this->logger->warning(
-      'HearMe: provider "@key" is configured but not registered. ' .
+      'HearMe: provider plugin "@key" is configured but not discoverable. ' .
       'The module that provides it may have been disabled. ' .
       'Update the provider at /admin/config/media/hear-me.',
       ['@key' => $providerKey]
@@ -160,7 +161,7 @@ class HearMeService {
     $providers = $this->getProviders();
     if (!isset($providers[$providerKey])) {
       $this->logger->error(
-        'HearMe: provider "@key" is configured but not registered; synthesis aborted. ' .
+        'HearMe: provider plugin "@key" is configured but not discoverable; synthesis aborted. ' .
         'The module that provides it may have been disabled. ' .
         'Update the provider at /admin/config/media/hear-me.',
         ['@key' => $providerKey]
@@ -450,15 +451,20 @@ class HearMeService {
   }
 
   /**
-   * Returns all registered TTS provider plugins, keyed by provider_key.
+   * Returns all registered TTS provider plugins, keyed by plugin ID.
    *
    * @return array<string, \Drupal\hear_me\Plugin\TtsProvider\TtsProviderInterface>
    */
   public function getProviders(): array {
-    if ($this->providers instanceof \Traversable) {
-      return iterator_to_array($this->providers);
+    $providers = [];
+    foreach (array_keys($this->providerManager->getDefinitions()) as $providerKey) {
+      $configuration = $this->configFactory
+        ->get('hear_me.provider.' . $providerKey)
+        ->get();
+      $providers[$providerKey] = $this->providerManager->createInstance($providerKey, $configuration);
     }
-    return (array) $this->providers;
+
+    return $providers;
   }
 
 }

@@ -2,7 +2,7 @@
 
 HearMe is a Drupal 11 accessibility module that adds text-to-speech (TTS) playback controls to content pages. It provides inline speaker buttons for marked text, a floating "Listen to this page" block, selected text playback, section selection playback, runtime audio caching. Clicking a speaker button synthesises the text and plays it back through an `<audio>` element — no page reload required.
 
-The module is built around an **open provider system**: any HTTP-based TTS service, cloud API, or custom backend can be plugged in by implementing a single PHP interface. HearMe includes a built-in Piper-compatible HTTP adapter, but it does not include or run Piper itself.
+The module is built around an **open provider plugin system**: any HTTP-based TTS service, cloud API, or custom backend can be integrated with an attribute-discovered Drupal plugin implementing the provider interface. HearMe includes a built-in Piper-compatible HTTP adapter, but it does not include or run Piper itself.
 
 ---
 
@@ -171,15 +171,15 @@ php tests/phpunit.php -c phpunit.xml.dist
 
 Set `SIMPLETEST_BASE_URL` and `SIMPLETEST_DB` to addresses reachable from the PHP process running PHPUnit. A MySQL URL has the form `mysql://user:password@host/database`.
 
-The PHPUnit suite covers install/uninstall defaults, config schema, queue worker and TTS provider discovery, active and invalid provider resolution, settings form saves and protected endpoint validation, provider-settings form rebuilding, `/hear-me/tts` permission/CSRF access, no-store runtime response headers, multi-bundle audio field provisioning and display configuration, compatible and incompatible existing fields, configurable queue source fields, source-configuration content hashes, stale queue item skipping, the existing-content backfill review/confirm/cancel and Batch workflow, duplicate pending job skips, generated/manual audio replacement policy, invalid and mixed Media references, and revision/moderation preservation during attachment.
+The PHPUnit suite covers install/uninstall defaults, config schema, queue worker and attribute-discovered TTS provider plugins, plugin construction with effective configuration, active and invalid provider resolution, configurable provider form persistence and rebuilding, protected endpoint validation, `/hear-me/tts` permission/CSRF access, no-store runtime response headers, multi-bundle audio field provisioning and display configuration, compatible and incompatible existing fields, configurable queue source fields, source-configuration content hashes, stale queue item skipping, the existing-content backfill review/confirm/cancel and Batch workflow, duplicate pending job skips, generated/manual audio replacement policy, invalid and mixed Media references, and revision/moderation preservation during attachment.
 
-The suite is expected to run without external services because `tests/modules/hear_me_test` registers a deterministic TTS provider that returns fixed WAV-like test data. Browser tests install temporary Drupal sites under Simpletest database prefixes and do not depend on the existing site configuration. The test bootstrap always loads Drupal from the host project and filters nested module-local `vendor/drupal/core` paths, so test execution uses the same Drupal core that installed the module.
+The suite is expected to run without external services because `tests/modules/hear_me_test` supplies a deterministic attributed TTS provider plugin that returns fixed WAV-like test data. Browser tests install temporary Drupal sites under Simpletest database prefixes and do not depend on the existing site configuration. The test bootstrap always loads Drupal from the host project and filters nested module-local `vendor/drupal/core` paths, so test execution uses the same Drupal core that installed the module.
 
 ## Provider System
 
-Providers are Drupal services tagged with `hear_me.provider`. Custom modules can register additional providers without changing HearMe code.
+Providers are attribute-discovered Drupal plugins under `Plugin/TtsProvider`. Custom modules can add providers without changing HearMe code.
 
-See [docs/providers.md](docs/providers.md) for interfaces, service tags, and configurable provider guidance.
+See [docs/providers.md](docs/providers.md) for the plugin attribute, interfaces, dependency injection, configuration forms, schema, and testing guidance.
 
 ### External TTS service
 

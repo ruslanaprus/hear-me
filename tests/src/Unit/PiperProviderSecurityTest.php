@@ -5,12 +5,17 @@ declare(strict_types=1);
 namespace Drupal\Tests\hear_me\Unit;
 
 use Drupal\Core\Form\FormState;
+use Drupal\Core\Language\LanguageManagerInterface;
+use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
 use Drupal\hear_me\Plugin\TtsProvider\PiperProvider;
+use GuzzleHttp\ClientInterface;
+use GuzzleHttp\Psr7\Response;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\NullLogger;
 
 /**
  * Tests Piper provider security-sensitive helpers.
@@ -18,6 +23,49 @@ use PHPUnit\Framework\TestCase;
 #[CoversClass(PiperProvider::class)]
 #[Group('hear_me')]
 class PiperProviderSecurityTest extends TestCase {
+
+  /**
+   * Tests snapshot configuration and the Piper HTTP request contract.
+   */
+  public function testConfiguredInstanceSendsExpectedRequestAndReturnsAudio(): void {
+    $configuration = [
+      'endpoint' => 'https://snapshot.example.com/tts',
+      'allow_private_endpoint_urls' => FALSE,
+      'default_lang' => 'uk',
+      'supported_langs' => ['en', 'uk'],
+    ];
+    $client = $this->createMock(ClientInterface::class);
+    $client->expects($this->once())
+      ->method('request')
+      ->with('POST', 'https://snapshot.example.com/tts', [
+        'json' => ['text' => 'Snapshot text', 'lang' => 'uk'],
+        'connect_timeout' => 5,
+        'timeout' => 30,
+        'allow_redirects' => FALSE,
+        'headers' => ['Accept' => 'audio/*'],
+      ])
+      ->willReturn(new Response(200, ['Content-Type' => 'audio/wav'], 'snapshot-audio'));
+    $loggerFactory = $this->createMock(LoggerChannelFactoryInterface::class);
+    $loggerFactory->method('get')->with('hear_me')->willReturn(new NullLogger());
+
+    $provider = new PiperProvider(
+      $configuration,
+      'piper',
+      ['id' => 'piper', 'label' => new TranslatableMarkup('Piper (self-hosted)')],
+      $client,
+      $this->createMock(LanguageManagerInterface::class),
+      $loggerFactory,
+    );
+
+    $this->assertSame('piper', $provider->getPluginId());
+    $this->assertSame($configuration, $provider->getConfiguration());
+    $this->assertSame(['en', 'uk'], $provider->getSupportedLanguages());
+    $audio = $provider->synthesize('Snapshot text', 'uk');
+    $this->assertNotNull($audio);
+    $this->assertSame('snapshot-audio', $audio->bytes);
+    $this->assertSame('audio/wav', $audio->mimeType);
+    $this->assertSame('wav', $audio->extension);
+  }
 
   /**
    * Tests endpoint element validation rejects unsafe endpoint URLs.

@@ -2,9 +2,10 @@
 
 namespace Drupal\hear_me\Plugin\TtsProvider;
 
+use Drupal\Component\Plugin\PluginInspectionInterface;
 use Drupal\hear_me\TtsSynthesisResult;
 
-interface TtsProviderInterface {
+interface TtsProviderInterface extends PluginInspectionInterface {
 
   /**
    * Synthesise text into speech.
@@ -26,16 +27,6 @@ interface TtsProviderInterface {
    *   Array of language codes supported, e.g. ['en', 'uk'].
    */
   public function getSupportedLanguages(): array;
-
-  /**
-   * Returns a human-readable label for this provider.
-   *
-   * Used to populate the provider selector in the settings form.
-   *
-   * @return string
-   *   Provider label, e.g. 'Piper (self-hosted)'.
-   */
-  public function getLabel(): string;
 
   /**
    * Returns the provider's default audio MIME type.

@@ -2,6 +2,7 @@
 
 namespace Drupal\hear_me\Form;
 
+use Drupal\Component\Plugin\ConfigurableInterface;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Config\TypedConfigManagerInterface;
 use Drupal\Core\Entity\Entity\EntityFormDisplay;
@@ -10,11 +11,14 @@ use Drupal\Core\Entity\EntityFieldManagerInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Form\ConfigFormBase;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Form\SubformState;
+use Drupal\Core\Plugin\PluginFormInterface;
 use Drupal\Core\Session\AccountInterface;
 use Drupal\field\Entity\FieldConfig;
 use Drupal\field\Entity\FieldStorageConfig;
 use Drupal\field\FieldConfigInterface;
-use Drupal\hear_me\Plugin\TtsProvider\TtsProviderConfigurableInterface;
+use Drupal\hear_me\Plugin\TtsProvider\TtsProviderInterface;
+use Drupal\hear_me\Plugin\TtsProvider\TtsProviderManager;
 use Drupal\hear_me\Service\HearMeAudioFieldValidator;
 use Drupal\hear_me\Service\HearMeExistingContentQueue;
 use Drupal\hear_me\Service\HearMeNodeAudioQueue;
@@ -27,6 +31,8 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 class HearMeSettingsForm extends ConfigFormBase {
 
   protected HearMeService $ttsService;
+
+  protected TtsProviderManager $providerManager;
 
   /**
    * The entity type manager, used to list available node bundles.
@@ -49,6 +55,7 @@ class HearMeSettingsForm extends ConfigFormBase {
     ConfigFactoryInterface $configFactory,
     TypedConfigManagerInterface $typedConfigManager,
     HearMeService $ttsService,
+    TtsProviderManager $providerManager,
     EntityTypeManagerInterface $entityTypeManager,
     EntityFieldManagerInterface $entityFieldManager,
     TtsCacheManager $cacheManager,
@@ -58,6 +65,7 @@ class HearMeSettingsForm extends ConfigFormBase {
   ) {
     parent::__construct($configFactory, $typedConfigManager);
     $this->ttsService        = $ttsService;
+    $this->providerManager   = $providerManager;
     $this->entityTypeManager = $entityTypeManager;
     $this->entityFieldManager = $entityFieldManager;
     $this->cacheManager      = $cacheManager;
@@ -71,6 +79,7 @@ class HearMeSettingsForm extends ConfigFormBase {
       $container->get('config.factory'),
       $container->get('config.typed'),
       $container->get('hear_me.service'),
+      $container->get('plugin.manager.hear_me.tts_provider'),
       $container->get('entity_type.manager'),
       $container->get('entity_field.manager'),
       $container->get('hear_me.cache_manager'),
@@ -82,7 +91,7 @@ class HearMeSettingsForm extends ConfigFormBase {
 
   protected function getEditableConfigNames(): array {
     $names = ['hear_me.settings'];
-    foreach ($this->ttsService->getProviders() as $key => $provider) {
+    foreach (array_keys($this->providerManager->getDefinitions()) as $key) {
       $names[] = 'hear_me.provider.' . $key;
     }
     return $names;
@@ -94,16 +103,17 @@ class HearMeSettingsForm extends ConfigFormBase {
 
   public function buildForm(array $form, FormStateInterface $form_state): array {
     $config    = $this->config('hear_me.settings');
-    $providers = $this->ttsService->getProviders();
+    $providerDefinitions = $this->providerManager->getDefinitions();
 
     $providerOptions = [];
-    foreach ($providers as $key => $provider) {
-      $providerOptions[$key] = $provider->getLabel();
+    foreach ($providerDefinitions as $key => $definition) {
+      $providerOptions[$key] = $definition['label'];
     }
 
-    $providerKey = $form_state->getValue('provider')
-      ?? $config->get('provider')
-      ?? array_key_first($providerOptions);
+    $submittedProvider = $form_state->getValue('provider');
+    $providerKey = is_string($submittedProvider)
+      ? $submittedProvider
+      : ($config->get('provider') ?? array_key_first($providerOptions));
     $runtimeCacheScheme = $config->get('runtime_cache_scheme') ?? 'private';
     if (!in_array($runtimeCacheScheme, ['private', 'public'], TRUE)) {
       $runtimeCacheScheme = 'private';
@@ -486,10 +496,12 @@ class HearMeSettingsForm extends ConfigFormBase {
       '#attributes' => ['id' => 'provider-settings-wrapper'],
     ];
 
-    if (isset($providers[$providerKey]) && $providers[$providerKey] instanceof TtsProviderConfigurableInterface) {
-      $providerConfig = $this->config('hear_me.provider.' . $providerKey)->getRawData();
-      $form['provider_settings'] = $providers[$providerKey]
-        ->buildConfigForm($form['provider_settings'], $providerConfig);
+    if (isset($providerDefinitions[$providerKey])) {
+      $provider = $this->createEditableProvider($providerKey);
+      if ($provider instanceof ConfigurableInterface && $provider instanceof PluginFormInterface) {
+        $subformState = SubformState::createForSubform($form['provider_settings'], $form, $form_state);
+        $form['provider_settings'] = $provider->buildConfigurationForm($form['provider_settings'], $subformState);
+      }
     }
 
     return parent::buildForm($form, $form_state);
@@ -497,6 +509,18 @@ class HearMeSettingsForm extends ConfigFormBase {
 
   public function validateForm(array &$form, FormStateInterface $form_state): void {
     parent::validateForm($form, $form_state);
+
+    $providerKey = $form_state->getValue('provider');
+    if (!is_string($providerKey) || $this->providerManager->getDefinition($providerKey, FALSE) === NULL) {
+      $form_state->setErrorByName('provider', $this->t('Select a discovered TTS provider plugin.'));
+    }
+    else {
+      $provider = $this->createEditableProvider($providerKey);
+      if ($provider instanceof ConfigurableInterface && $provider instanceof PluginFormInterface) {
+        $subformState = SubformState::createForSubform($form['provider_settings'], $form, $form_state);
+        $provider->validateConfigurationForm($form['provider_settings'], $subformState);
+      }
+    }
 
     $nonNegativeFields = [
       'cache_inline_ttl' => $this->t('Inline cache TTL'),
@@ -649,7 +673,6 @@ class HearMeSettingsForm extends ConfigFormBase {
 
   public function submitForm(array &$form, FormStateInterface $form_state): void {
     $providerKey = $form_state->getValue('provider');
-    $providers   = $this->ttsService->getProviders();
 
     $queueBundles = array_values(
       array_filter($form_state->getValue('queue_bundles') ?? [])
@@ -681,8 +704,13 @@ class HearMeSettingsForm extends ConfigFormBase {
       ->set('overwrite_manual_audio', (bool) $form_state->getValue('overwrite_manual_audio'))
       ->save();
 
-    if (isset($providers[$providerKey]) && $providers[$providerKey] instanceof TtsProviderConfigurableInterface) {
-      $providers[$providerKey]->submitConfigForm($form, $form_state);
+    $provider = is_string($providerKey) ? $this->createEditableProvider($providerKey) : NULL;
+    if ($provider instanceof ConfigurableInterface && $provider instanceof PluginFormInterface) {
+      $subformState = SubformState::createForSubform($form['provider_settings'], $form, $form_state);
+      $provider->submitConfigurationForm($form['provider_settings'], $subformState);
+      $this->configFactory->getEditable('hear_me.provider.' . $providerKey)
+        ->setData($provider->getConfiguration())
+        ->save();
     }
 
     $summary = $this->audioFieldValidator->validateBundles(
@@ -695,6 +723,20 @@ class HearMeSettingsForm extends ConfigFormBase {
     }
 
     parent::submitForm($form, $form_state);
+  }
+
+  /**
+   * Creates a provider using override-free active configuration for editing.
+   */
+  private function createEditableProvider(string $providerKey): ?TtsProviderInterface {
+    if ($this->providerManager->getDefinition($providerKey, FALSE) === NULL) {
+      return NULL;
+    }
+
+    $providerConfig = $this->configFactory
+      ->getEditable('hear_me.provider.' . $providerKey)
+      ->getRawData();
+    return $this->providerManager->createInstance($providerKey, $providerConfig);
   }
 
   public function clearRuntimeCacheSubmit(array &$form, FormStateInterface $form_state): void {

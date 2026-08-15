@@ -1,4 +1,11 @@
 services:
+  plugin.manager.hear_me.tts_provider:
+    class: Drupal\hear_me\Plugin\TtsProvider\TtsProviderManager
+    arguments:
+      - '@container.namespaces'
+      - '@cache.discovery'
+      - '@module_handler'
+
   # Shared file-path utility
   hear_me.file_helper:
     class: Drupal\hear_me\Service\TtsFileHelper
@@ -78,21 +85,10 @@ services:
     class: Drupal\hear_me\Service\HearMeService
     arguments:
       - '@config.factory'
-      - !tagged_iterator { tag: hear_me.provider, index_by: provider_key }
+      - '@plugin.manager.hear_me.tts_provider'
       - '@entity_type.manager'
       - '@hear_me.file_helper'
       - '@hear_me.cache_manager'
       - '@lock'
       - '@logger.factory'
       - '@private_key'
-
-  # Piper-compatible HTTP adapter.
-  hear_me.provider.piper:
-    class: Drupal\hear_me\Plugin\TtsProvider\PiperProvider
-    arguments:
-      - '@http_client'
-      - '@config.factory'
-      - '@language_manager'
-      - '@logger.factory'
-    tags:
-      - { name: hear_me.provider, provider_key: piper }

@@ -19,13 +19,13 @@ Browser
   │  click 🔊
   │  POST /hear-me/tts  { text, lang, source }
   ▼
-HearMeController  ──  input validation
+HearMeController  ──  input validation and active provider ID
   │
   ▼
 HearMeService  ──── file cache hit? ──► return cached audio ──► <audio> element
   │  (cache miss)
   ▼
-Active TTS Provider  (implements TtsProviderInterface)
+TtsProviderResolver  ──► Active TTS Provider  (implements TtsProviderInterface)
   │  HTTP call to external service / API
   ▼
 audio bytes  ──►  optionally saved as File + cache metadata  ──►  returned to browser  ──►  <audio> element
@@ -171,7 +171,7 @@ php tests/phpunit.php -c phpunit.xml.dist
 
 Set `SIMPLETEST_BASE_URL` and `SIMPLETEST_DB` to addresses reachable from the PHP process running PHPUnit. A MySQL URL has the form `mysql://user:password@host/database`.
 
-The PHPUnit suite covers install/uninstall defaults, config schema, queue worker and attribute-discovered TTS provider plugins, plugin construction with effective configuration, active and invalid provider resolution, configurable provider form persistence and rebuilding, protected endpoint validation, `/hear-me/tts` permission/CSRF access, no-store runtime response headers, multi-bundle audio field provisioning and display configuration, compatible and incompatible existing fields, configurable queue source fields, source-configuration content hashes, stale queue item skipping, the existing-content backfill review/confirm/cancel and Batch workflow, duplicate pending job skips, generated/manual audio replacement policy, invalid and mixed Media references, and revision/moderation preservation during attachment.
+The PHPUnit suite covers install/uninstall defaults, config schema, queue worker and attribute-discovered TTS provider plugins, plugin construction with effective configuration, active and invalid provider resolution, consistent provider identity across validation, rate limits, tokens and synthesis, configurable provider form persistence and rebuilding, protected endpoint validation, `/hear-me/tts` permission/CSRF access, no-store runtime response headers, multi-bundle audio field provisioning and display configuration, compatible and incompatible existing fields, configurable queue source fields, source-configuration content hashes, stale queue item skipping, the existing-content backfill review/confirm/cancel and Batch workflow, duplicate pending job skips, generated/manual audio replacement policy, invalid and mixed Media references, and revision/moderation preservation during attachment.
 
 The suite is expected to run without external services because `tests/modules/hear_me_test` supplies a deterministic attributed TTS provider plugin that returns fixed WAV-like test data. Browser tests install temporary Drupal sites under Simpletest database prefixes and do not depend on the existing site configuration. The test bootstrap always loads Drupal from the host project and filters nested module-local `vendor/drupal/core` paths, so test execution uses the same Drupal core that installed the module.
 
@@ -183,7 +183,7 @@ See [docs/providers.md](docs/providers.md) for the plugin attribute, interfaces,
 
 ### External TTS service
 
-The module requires at least one registered TTS provider. The built-in **Piper HTTP adapter** connects to an external [Piper-compatible TTS HTTP service](https://github.com/ruslanaprus/piper-tts-service) that accepts `POST /tts` with `{ "text": "...", "lang": "..." }` and returns `audio/wav`. HearMe does not include Piper binaries, voices, containers, or service code; site owners must provide an endpoint reachable from Drupal. The Piper-compatible service has no format selection parameter — WAV is its fixed output format. Other providers are free to return any audio format (MP3, OGG, etc.); the provider interface declares the MIME type and file extension so the module handles caching correctly regardless of format. Any service with a compatible request/response contract works — self-hosted, containerised, or cloud-hosted.
+The module requires at least one discovered TTS provider plugin. The built-in **Piper HTTP adapter** connects to an external [Piper-compatible TTS HTTP service](https://github.com/ruslanaprus/piper-tts-service) that accepts `POST /tts` with `{ "text": "...", "lang": "..." }` and returns `audio/wav`. HearMe does not include Piper binaries, voices, containers, or service code; site owners must provide an endpoint reachable from Drupal. The Piper-compatible service has no format selection parameter — WAV is its fixed output format. Other providers are free to return any audio format (MP3, OGG, etc.); the provider interface declares the MIME type and file extension so the module handles caching correctly regardless of format. Any service with a compatible request/response contract works — self-hosted, containerised, or cloud-hosted.
 
 See [Provider system](#provider-system) to connect a different service.
 

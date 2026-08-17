@@ -6,6 +6,7 @@ namespace Drupal\Tests\hear_me\Kernel;
 
 use Drupal\hear_me\Plugin\TtsProvider\PiperProvider;
 use Drupal\hear_me\Plugin\TtsProvider\TtsProviderManager;
+use Drupal\hear_me\Service\TtsProviderResolver;
 use Drupal\hear_me_test\Plugin\TtsProvider\TestProvider;
 use Drupal\KernelTests\KernelTestBase;
 use PHPUnit\Framework\Attributes\Group;
@@ -60,6 +61,10 @@ class HearMeProviderTest extends KernelTestBase {
     $this->assertSame(TestProvider::class, $definitions['test']['class']);
     $this->assertInstanceOf(PiperProvider::class, $manager->createInstance('piper', []));
     $this->assertInstanceOf(TestProvider::class, $manager->createInstance('test'));
+
+    $resolver = $this->container->get('hear_me.provider_resolver');
+    $this->assertInstanceOf(TtsProviderResolver::class, $resolver);
+    $this->assertSame($definitions, $resolver->getProviderDefinitions());
   }
 
   /**
@@ -83,15 +88,18 @@ class HearMeProviderTest extends KernelTestBase {
       ->save();
 
     $this->assertSame(['fr'], $snapshot->getSupportedLanguages());
-    $provider = $this->container->get('hear_me.service')->getProviders()['piper'];
+    $resolver = $this->container->get('hear_me.provider_resolver');
+    $provider = $resolver->getProvider('piper');
+    $this->assertNotNull($provider);
     $this->assertNotSame($snapshot, $provider);
+    $this->assertSame('en', $resolver->getDefaultLanguage('piper'));
     $this->assertSame('https://effective.example.com/tts', $provider->getConfiguration()['endpoint']);
     $this->assertSame(['de'], $provider->getSupportedLanguages());
 
     $this->config('hear_me.provider.piper')
       ->set('supported_langs', ['uk'])
       ->save();
-    $this->assertSame(['uk'], $this->container->get('hear_me.service')->getSupportedLanguages());
+    $this->assertSame(['uk'], $resolver->getSupportedLanguages('piper'));
     $this->assertSame(['fr'], $snapshot->getSupportedLanguages());
   }
 
@@ -103,17 +111,44 @@ class HearMeProviderTest extends KernelTestBase {
       ->set('supported_langs', ['en'])
       ->save();
     $service = $this->container->get('hear_me.service');
+    $resolver = $this->container->get('hear_me.provider_resolver');
     $tokenBeforeOverride = $service->buildCacheToken('Override identity', 'en', 'inline');
+    $this->assertSame(
+      $tokenBeforeOverride,
+      $service->buildCacheToken('Override identity', 'en', 'inline', 'piper'),
+    );
+    $storedHashInput = $this->config('hear_me.provider.piper')->getRawData();
     $effectiveConfig = $this->container
       ->get('config.factory')
       ->get('hear_me.provider.piper');
     $effectiveConfig->setSettingsOverride(['supported_langs' => ['es']]);
 
-    $provider = $service->getProviders()['piper'];
+    $provider = $resolver->getProvider('piper');
 
+    $this->assertNotNull($provider);
     $this->assertSame(['es'], $provider->getSupportedLanguages());
     $this->assertSame(['en'], $this->config('hear_me.provider.piper')->get('supported_langs'));
+    $this->assertSame($storedHashInput, $resolver->getProviderConfigurationHashInput('piper'));
     $this->assertSame($tokenBeforeOverride, $service->buildCacheToken('Override identity', 'en', 'inline'));
+
+    $unsortedHashInput = [
+      'supported_langs' => ['en'],
+      'endpoint' => 'https://effective.example.com/tts',
+      'default_lang' => 'en',
+      'allow_private_endpoint_urls' => FALSE,
+    ];
+    $this->config('hear_me.provider.piper')
+      ->setData($unsortedHashInput)
+      ->save();
+    $storedHashInput = $this->config('hear_me.provider.piper')->getRawData();
+    $this->assertSame(
+      $storedHashInput,
+      $resolver->getProviderConfigurationHashInput('piper')
+    );
+    $this->assertSame(
+      ['endpoint', 'allow_private_endpoint_urls', 'default_lang', 'supported_langs'],
+      array_keys($resolver->getProviderConfigurationHashInput('piper'))
+    );
 
     $this->config('hear_me.provider.piper')
       ->set('supported_langs', ['fr'])
@@ -131,8 +166,9 @@ class HearMeProviderTest extends KernelTestBase {
       ->save();
 
     $service = $this->container->get('hear_me.service');
-    $this->assertSame('test', $service->getProviderKey());
-    $this->assertSame(['en'], $service->getSupportedLanguages());
+    $resolver = $this->container->get('hear_me.provider_resolver');
+    $this->assertSame('test', $resolver->getActiveProviderId());
+    $this->assertSame(['en'], $resolver->getSupportedLanguages('test'));
 
     $audio = $service->getAudio('Characterized text', 'en');
     $this->assertNotNull($audio);
@@ -150,8 +186,11 @@ class HearMeProviderTest extends KernelTestBase {
     $this->config('hear_me.settings')->clear('provider')->save();
 
     $this->expectException(\RuntimeException::class);
-    $this->expectExceptionMessage('HearMe: the "provider" key is missing from hear_me.settings configuration.');
-    $this->container->get('hear_me.service')->getProviderKey();
+    $this->expectExceptionMessage(
+      'HearMe: the "provider" key is missing from hear_me.settings configuration. ' .
+      'Re-install the module or set the value at /admin/config/media/hear-me.'
+    );
+    $this->container->get('hear_me.provider_resolver')->getActiveProviderId();
   }
 
   /**
@@ -164,12 +203,16 @@ class HearMeProviderTest extends KernelTestBase {
       ->save();
 
     $service = $this->container->get('hear_me.service');
-    $this->assertSame('unknown', $service->getProviderKey());
+    $resolver = $this->container->get('hear_me.provider_resolver');
+    $this->assertSame('unknown', $resolver->getActiveProviderId());
+    $this->assertNull($resolver->getProvider('unknown'));
     $this->assertNull($service->getAudio('Characterized text', 'en'));
 
     $this->expectException(\RuntimeException::class);
-    $this->expectExceptionMessage('HearMe: the "default_lang" key is missing from hear_me.provider.unknown configuration.');
-    $service->getSupportedLanguages();
+    $this->expectExceptionMessage(
+      'HearMe: the "default_lang" key is missing from hear_me.provider.unknown configuration.'
+    );
+    $resolver->getSupportedLanguages('unknown');
   }
 
 }

@@ -9,7 +9,7 @@ use Drupal\Core\Language\LanguageManagerInterface;
 use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
 use Drupal\Core\Url;
-use Drupal\hear_me\Service\HearMeService;
+use Drupal\hear_me\Service\TtsProviderResolver;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
@@ -25,7 +25,7 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 )]
 class HearMeBlock extends BlockBase implements ContainerFactoryPluginInterface {
 
-  protected HearMeService $ttsService;
+  protected TtsProviderResolver $providerResolver;
 
   protected LanguageManagerInterface $languageManager;
 
@@ -33,11 +33,11 @@ class HearMeBlock extends BlockBase implements ContainerFactoryPluginInterface {
     array $configuration,
     $plugin_id,
     $plugin_definition,
-    HearMeService $ttsService,
+    TtsProviderResolver $providerResolver,
     LanguageManagerInterface $languageManager,
   ) {
     parent::__construct($configuration, $plugin_id, $plugin_definition);
-    $this->ttsService = $ttsService;
+    $this->providerResolver = $providerResolver;
     $this->languageManager = $languageManager;
   }
 
@@ -46,7 +46,7 @@ class HearMeBlock extends BlockBase implements ContainerFactoryPluginInterface {
       $configuration,
       $plugin_id,
       $plugin_definition,
-      $container->get('hear_me.service'),
+      $container->get('hear_me.provider_resolver'),
       $container->get('language_manager'),
     );
   }
@@ -58,13 +58,13 @@ class HearMeBlock extends BlockBase implements ContainerFactoryPluginInterface {
   }
 
   public function build(): array {
-    $providerKey = $this->ttsService->getProviderKey();
+    $providerId = $this->providerResolver->getActiveProviderId();
     $currentLangcode = $this->languageManager->getCurrentLanguage()->getId();
-    $supportedLangs = $this->ttsService->getSupportedLanguages();
+    $supportedLangs = $this->providerResolver->getSupportedLanguages($providerId);
     $shortCode = strtolower(substr($currentLangcode, 0, 2));
     $resolvedLang = in_array($shortCode, $supportedLangs, TRUE)
       ? $shortCode
-      : $this->ttsService->getDefaultLang();
+      : $this->providerResolver->getDefaultLanguage($providerId);
 
     return [
       'button' => [
@@ -92,7 +92,7 @@ class HearMeBlock extends BlockBase implements ContainerFactoryPluginInterface {
         'contexts' => ['languages:language_interface'],
         'tags'     => [
           'config:hear_me.settings',
-          'config:hear_me.provider.' . $providerKey,
+          'config:hear_me.provider.' . $providerId,
         ],
         'max-age'  => Cache::PERMANENT,
       ],

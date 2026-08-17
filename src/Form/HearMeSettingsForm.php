@@ -21,16 +21,16 @@ use Drupal\hear_me\Plugin\TtsProvider\TtsProviderInterface;
 use Drupal\hear_me\Plugin\TtsProvider\TtsProviderManager;
 use Drupal\hear_me\Service\HearMeAudioFieldValidator;
 use Drupal\hear_me\Service\HearMeExistingContentQueue;
-use Drupal\hear_me\Service\HearMeNodeAudioQueue;
-use Drupal\hear_me\Service\HearMeService;
 use Drupal\hear_me\Service\HearMeInputValidator;
+use Drupal\hear_me\Service\HearMeNodeAudioQueue;
 use Drupal\hear_me\Service\HearMeSetupStatus;
 use Drupal\hear_me\Service\TtsCacheManager;
+use Drupal\hear_me\Service\TtsProviderResolver;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 class HearMeSettingsForm extends ConfigFormBase {
 
-  protected HearMeService $ttsService;
+  protected TtsProviderResolver $providerResolver;
 
   protected TtsProviderManager $providerManager;
 
@@ -54,7 +54,7 @@ class HearMeSettingsForm extends ConfigFormBase {
   public function __construct(
     ConfigFactoryInterface $configFactory,
     TypedConfigManagerInterface $typedConfigManager,
-    HearMeService $ttsService,
+    TtsProviderResolver $providerResolver,
     TtsProviderManager $providerManager,
     EntityTypeManagerInterface $entityTypeManager,
     EntityFieldManagerInterface $entityFieldManager,
@@ -64,7 +64,7 @@ class HearMeSettingsForm extends ConfigFormBase {
     HearMeAudioFieldValidator $audioFieldValidator,
   ) {
     parent::__construct($configFactory, $typedConfigManager);
-    $this->ttsService        = $ttsService;
+    $this->providerResolver  = $providerResolver;
     $this->providerManager   = $providerManager;
     $this->entityTypeManager = $entityTypeManager;
     $this->entityFieldManager = $entityFieldManager;
@@ -78,7 +78,7 @@ class HearMeSettingsForm extends ConfigFormBase {
     return new static(
       $container->get('config.factory'),
       $container->get('config.typed'),
-      $container->get('hear_me.service'),
+      $container->get('hear_me.provider_resolver'),
       $container->get('plugin.manager.hear_me.tts_provider'),
       $container->get('entity_type.manager'),
       $container->get('entity_field.manager'),
@@ -91,7 +91,7 @@ class HearMeSettingsForm extends ConfigFormBase {
 
   protected function getEditableConfigNames(): array {
     $names = ['hear_me.settings'];
-    foreach (array_keys($this->providerManager->getDefinitions()) as $key) {
+    foreach (array_keys($this->providerResolver->getProviderDefinitions()) as $key) {
       $names[] = 'hear_me.provider.' . $key;
     }
     return $names;
@@ -103,7 +103,7 @@ class HearMeSettingsForm extends ConfigFormBase {
 
   public function buildForm(array $form, FormStateInterface $form_state): array {
     $config    = $this->config('hear_me.settings');
-    $providerDefinitions = $this->providerManager->getDefinitions();
+    $providerDefinitions = $this->providerResolver->getProviderDefinitions();
 
     $providerOptions = [];
     foreach ($providerDefinitions as $key => $definition) {

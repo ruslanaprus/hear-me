@@ -24,7 +24,7 @@ class HearMeInputValidator {
 
   public function __construct(
     protected ConfigFactoryInterface $configFactory,
-    protected HearMeService $ttsService,
+    protected TtsProviderResolver $providerResolver,
   ) {}
 
   public function validateRequestBody(string $content): TtsInputValidationResult {
@@ -47,11 +47,12 @@ class HearMeInputValidator {
     }
 
     $lang = $this->normalizeLang((string) ($data['lang'] ?? ''));
+    $providerId = $this->providerResolver->getActiveProviderId();
     if ($lang === '') {
-      $lang = $this->normalizeLang($this->ttsService->getDefaultLang());
+      $lang = $this->normalizeLang($this->providerResolver->getDefaultLanguage($providerId));
     }
 
-    $resolvedLang = $this->resolveSupportedLanguage($lang);
+    $resolvedLang = $this->resolveSupportedLanguage($lang, $providerId);
     if ($resolvedLang === NULL) {
       return TtsInputValidationResult::invalid('Unsupported language');
     }
@@ -59,7 +60,7 @@ class HearMeInputValidator {
     $source = $this->normalizeSource((string) ($data['source'] ?? 'adhoc'));
     $cacheToken = $this->normalizeCacheToken((string) ($data['cache_token'] ?? ''));
 
-    return TtsInputValidationResult::valid($text, $resolvedLang, $source, $cacheToken);
+    return TtsInputValidationResult::valid($text, $resolvedLang, $providerId, $source, $cacheToken);
   }
 
   private function getMaxRequestBytes(): int {
@@ -99,9 +100,9 @@ class HearMeInputValidator {
     return strtolower(str_replace('_', '-', trim($lang)));
   }
 
-  private function resolveSupportedLanguage(string $lang): ?string {
+  private function resolveSupportedLanguage(string $lang, string $providerId): ?string {
     $supportedLangs = [];
-    foreach ($this->ttsService->getSupportedLanguages() as $supportedLang) {
+    foreach ($this->providerResolver->getSupportedLanguages($providerId) as $supportedLang) {
       $supportedLangs[$this->normalizeLang($supportedLang)] = $supportedLang;
     }
 

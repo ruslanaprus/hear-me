@@ -28,7 +28,7 @@ class HearMeExistingContentQueue {
     protected ConfigFactoryInterface $configFactory,
     protected EntityTypeManagerInterface $entityTypeManager,
     protected HearMeNodeAudioQueue $nodeAudioQueue,
-    protected HearMeService $ttsService,
+    protected TtsProviderResolver $providerResolver,
     protected HearMeAudioFieldValidator $audioFieldValidator,
   ) {}
 
@@ -190,6 +190,7 @@ class HearMeExistingContentQueue {
     }
 
     $nodes = $this->entityTypeManager->getStorage('node')->loadMultiple($nids);
+    $providerId = $this->providerResolver->getActiveProviderId();
     foreach ($nids as $nid) {
       $lastNid = max($lastNid, $nid);
       $node = $nodes[$nid] ?? NULL;
@@ -198,7 +199,7 @@ class HearMeExistingContentQueue {
         continue;
       }
 
-      $stats = $this->mergeStats($stats, $this->queueNode($node, $missingOnly));
+      $stats = $this->mergeStats($stats, $this->queueNode($node, $missingOnly, $providerId));
     }
 
     return [
@@ -285,7 +286,7 @@ class HearMeExistingContentQueue {
    * @return array<string, int>
    *   Statistics for this node.
    */
-  protected function queueNode(NodeInterface $node, bool $missingOnly): array {
+  protected function queueNode(NodeInterface $node, bool $missingOnly, string $providerId): array {
     $stats = $this->emptyStats();
     $fieldName = $this->getAudioFieldName();
     if (!$this->hasCompatibleAudioField($node->bundle(), $fieldName)) {
@@ -298,13 +299,13 @@ class HearMeExistingContentQueue {
       return $stats;
     }
 
-    $queueItem = $this->nodeAudioQueue->buildQueueItem($node);
+    $queueItem = $this->nodeAudioQueue->buildQueueItem($node, $providerId);
     if ($queueItem === NULL) {
       $stats['skipped_source_empty']++;
       return $stats;
     }
 
-    if (!$this->isSupportedLanguage((string) $queueItem['lang'])) {
+    if (!$this->isSupportedLanguage((string) $queueItem['lang'], $providerId)) {
       $stats['skipped_unsupported_language']++;
       return $stats;
     }
@@ -322,8 +323,8 @@ class HearMeExistingContentQueue {
   /**
    * Checks provider language support.
    */
-  protected function isSupportedLanguage(string $lang): bool {
-    $supported = array_map('strtolower', $this->ttsService->getSupportedLanguages());
+  protected function isSupportedLanguage(string $lang, string $providerId): bool {
+    $supported = array_map('strtolower', $this->providerResolver->getSupportedLanguages($providerId));
     return in_array(strtolower($lang), $supported, TRUE);
   }
 

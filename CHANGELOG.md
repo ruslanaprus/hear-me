@@ -30,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Lifecycle hooks live in `hear_me.install` for Drupal install/uninstall discovery.
 - Queue worker lives under `Plugin\QueueWorker` for Drupal queue worker discovery.
 - Runtime playback cache defaults to private files.
+- Active provider selection and metadata are coordinated by an internal resolver, while provider plugins remain the supported extension API.
 
 ### Security
 

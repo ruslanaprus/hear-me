@@ -8,7 +8,6 @@ use Drupal\Core\Entity\RevisionableInterface;
 use Drupal\Core\Lock\LockBackendInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\Core\PrivateKey;
-use Drupal\hear_me\Plugin\TtsProvider\TtsProviderManager;
 use Drupal\hear_me\TtsAudioResult;
 use Drupal\hear_me\TtsSynthesisResult;
 use Drupal\media\Entity\Media;
@@ -18,7 +17,7 @@ use Drupal\node\NodeInterface;
 class HearMeService {
 
   protected ConfigFactoryInterface $configFactory;
-  protected TtsProviderManager $providerManager;
+  protected TtsProviderResolver $providerResolver;
   protected EntityTypeManagerInterface $entityTypeManager;
   protected TtsFileHelperInterface $fileHelper;
   protected TtsCacheManager $cacheManager;
@@ -28,7 +27,7 @@ class HearMeService {
 
   public function __construct(
     ConfigFactoryInterface $configFactory,
-    TtsProviderManager $providerManager,
+    TtsProviderResolver $providerResolver,
     EntityTypeManagerInterface $entityTypeManager,
     TtsFileHelperInterface $fileHelper,
     TtsCacheManager $cacheManager,
@@ -37,31 +36,13 @@ class HearMeService {
     PrivateKey $privateKey,
   ) {
     $this->configFactory     = $configFactory;
-    $this->providerManager   = $providerManager;
+    $this->providerResolver  = $providerResolver;
     $this->entityTypeManager = $entityTypeManager;
     $this->fileHelper        = $fileHelper;
     $this->cacheManager      = $cacheManager;
     $this->lock              = $lock;
     $this->logger            = $loggerFactory->get('hear_me');
     $this->privateKey        = $privateKey;
-  }
-
-  /**
-   * Resolves the active TTS provider key from configuration.
-   */
-  private function resolveProviderKey(): string {
-    $key = $this->configFactory->get('hear_me.settings')->get('provider');
-    if (!$key) {
-      throw new \RuntimeException(
-        'HearMe: the "provider" key is missing from hear_me.settings configuration. ' .
-        'Re-install the module or set the value at /admin/config/media/hear-me.'
-      );
-    }
-    return $key;
-  }
-
-  public function getProviderKey(): string {
-    return $this->resolveProviderKey();
   }
 
   /**
@@ -72,55 +53,14 @@ class HearMeService {
   }
 
   /**
-   * Returns the default language for the currently active provider.
-   */
-  public function getDefaultLang(): string {
-    $providerKey = $this->resolveProviderKey();
-    $lang = $this->configFactory->get('hear_me.provider.' . $providerKey)->get('default_lang');
-    if (!$lang) {
-      throw new \RuntimeException(
-        sprintf(
-          'HearMe: the "default_lang" key is missing from hear_me.provider.%s configuration.',
-          $providerKey
-        )
-      );
-    }
-    return $lang;
-  }
-
-  /**
-   * Returns the supported language codes for the currently active provider.
-   *
-   * @return string[]
-   *   Array of language codes, e.g. ['en', 'uk'].
-   */
-  public function getSupportedLanguages(): array {
-    $providerKey = $this->resolveProviderKey();
-    $providers   = $this->getProviders();
-
-    if (isset($providers[$providerKey])) {
-      return $providers[$providerKey]->getSupportedLanguages();
-    }
-
-    $this->logger->warning(
-      'HearMe: provider plugin "@key" is configured but not discoverable. ' .
-      'The module that provides it may have been disabled. ' .
-      'Update the provider at /admin/config/media/hear-me.',
-      ['@key' => $providerKey]
-    );
-
-    return [$this->getDefaultLang()];
-  }
-
-  /**
    * Synthesizes persistent audio for pre-generation workflows.
    *
    * Runtime playback should use getAudio(). This method intentionally creates
    * or reuses a Media entity because queue-based pre-generation attaches audio
    * to content.
    */
-  public function synthesize(string $text, string $lang): ?Media {
-    $audio = $this->generateAudio($text, $lang, 'entity', TRUE);
+  public function synthesize(string $text, string $lang, ?string $providerId = NULL): ?Media {
+    $audio = $this->generateAudio($text, $lang, 'entity', TRUE, $providerId);
     if ($audio === NULL || $audio->uri === NULL) {
       return NULL;
     }
@@ -131,48 +71,43 @@ class HearMeService {
   /**
    * Returns audio bytes and format metadata for the given text and language.
    */
-  public function getAudio(string $text, string $lang, string $source = 'adhoc'): ?TtsAudioResult {
-    return $this->generateAudio($text, $lang, $source, FALSE);
+  public function getAudio(string $text, string $lang, string $source = 'adhoc', ?string $providerId = NULL): ?TtsAudioResult {
+    return $this->generateAudio($text, $lang, $source, FALSE, $providerId);
   }
 
   /**
    * Returns the raw audio bytes for the given text and language.
    */
-  public function getAudioBytes(string $text, string $lang): ?string {
-    $audio = $this->getAudio($text, $lang);
+  public function getAudioBytes(string $text, string $lang, ?string $providerId = NULL): ?string {
+    $audio = $this->getAudio($text, $lang, 'adhoc', $providerId);
     return $audio?->bytes;
   }
 
-  public function buildCacheToken(string $text, string $lang, string $source): string {
-    return hash_hmac('sha256', $this->buildCacheTokenPayload($text, $lang, $source), $this->privateKey->get());
+  public function buildCacheToken(string $text, string $lang, string $source, ?string $providerId = NULL): string {
+    return hash_hmac('sha256', $this->buildCacheTokenPayload($text, $lang, $source, $providerId), $this->privateKey->get());
   }
 
-  public function getTrustedRuntimeSource(string $text, string $lang, string $source, ?string $cacheToken): string {
+  public function getTrustedRuntimeSource(string $text, string $lang, string $source, ?string $cacheToken, ?string $providerId = NULL): string {
     $source = $this->cacheManager->normalizeSource($source);
-    if ($source === 'inline' && !$this->validateCacheToken($text, $lang, $source, $cacheToken)) {
+    if ($source === 'inline' && !$this->validateCacheToken($text, $lang, $source, $cacheToken, $providerId)) {
       return 'adhoc';
     }
 
     return $source;
   }
 
-  private function generateAudio(string $text, string $lang, string $source, bool $forcePersistent): ?TtsAudioResult {
-    $providerKey = $this->resolveProviderKey();
-    $providers = $this->getProviders();
-    if (!isset($providers[$providerKey])) {
-      $this->logger->error(
-        'HearMe: provider plugin "@key" is configured but not discoverable; synthesis aborted. ' .
-        'The module that provides it may have been disabled. ' .
-        'Update the provider at /admin/config/media/hear-me.',
-        ['@key' => $providerKey]
-      );
+  private function generateAudio(string $text, string $lang, string $source, bool $forcePersistent, ?string $providerId = NULL): ?TtsAudioResult {
+    $providerKey = $providerId ?? $this->providerResolver->getActiveProviderId();
+    $provider = $this->providerResolver->getProvider($providerKey);
+    if ($provider === NULL) {
       return NULL;
     }
 
-    $provider = $providers[$providerKey];
     $source = $this->cacheManager->normalizeSource($source);
     $extension = $provider->getDefaultExtension();
-    $providerConfigHash = $this->getProviderConfigHash($providerKey);
+    $providerConfigHash = $this->cacheManager->buildProviderConfigHash(
+      $this->providerResolver->getProviderConfigurationHashInput($providerKey)
+    );
     $cid = $this->cacheManager->buildCacheId($text, $lang, $providerKey, $extension, $source, $providerConfigHash);
     $uri = $this->cacheManager->buildUri($cid, $extension, $source);
     $ttl = $forcePersistent ? 0 : $this->cacheManager->getTtlForSource($source);
@@ -237,28 +172,26 @@ class HearMeService {
     }
   }
 
-  private function getProviderConfigHash(string $providerKey): string {
-    $providerConfig = $this->configFactory->get('hear_me.provider.' . $providerKey)->getRawData();
-    return $this->cacheManager->buildProviderConfigHash($providerConfig);
-  }
-
-  private function validateCacheToken(string $text, string $lang, string $source, ?string $cacheToken): bool {
+  private function validateCacheToken(string $text, string $lang, string $source, ?string $cacheToken, ?string $providerId = NULL): bool {
     if (!is_string($cacheToken) || !preg_match('/^[a-f0-9]{64}$/', $cacheToken)) {
       return FALSE;
     }
 
-    return hash_equals($this->buildCacheToken($text, $lang, $source), $cacheToken);
+    return hash_equals($this->buildCacheToken($text, $lang, $source, $providerId), $cacheToken);
   }
 
-  private function buildCacheTokenPayload(string $text, string $lang, string $source): string {
-    $providerKey = $this->resolveProviderKey();
+  private function buildCacheTokenPayload(string $text, string $lang, string $source, ?string $providerId = NULL): string {
+    $providerKey = $providerId ?? $this->providerResolver->getActiveProviderId();
+    $providerConfigHash = $this->cacheManager->buildProviderConfigHash(
+      $this->providerResolver->getProviderConfigurationHashInput($providerKey)
+    );
     return implode("\0", [
       'v1',
       $this->cacheManager->normalizeSource($source),
       hash('sha256', $this->normalizeTokenText($text)),
       strtolower($lang),
       $providerKey,
-      $this->getProviderConfigHash($providerKey),
+      $providerConfigHash,
     ]);
   }
 
@@ -448,23 +381,6 @@ class HearMeService {
     }
 
     return TRUE;
-  }
-
-  /**
-   * Returns all registered TTS provider plugins, keyed by plugin ID.
-   *
-   * @return array<string, \Drupal\hear_me\Plugin\TtsProvider\TtsProviderInterface>
-   */
-  public function getProviders(): array {
-    $providers = [];
-    foreach (array_keys($this->providerManager->getDefinitions()) as $providerKey) {
-      $configuration = $this->configFactory
-        ->get('hear_me.provider.' . $providerKey)
-        ->get();
-      $providers[$providerKey] = $this->providerManager->createInstance($providerKey, $configuration);
-    }
-
-    return $providers;
   }
 
 }

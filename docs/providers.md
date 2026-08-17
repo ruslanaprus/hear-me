@@ -8,6 +8,8 @@ A provider plugin is the integration layer between HearMe and a TTS backend. Hea
 
 HearMe discovers the available provider plugins and creates configured instances through Drupal's plugin manager. Plugin construction must remain lightweight: open network connections and perform expensive work only when synthesis is requested.
 
+Provider selection and metadata are coordinated by an internal resolver. Provider modules should depend only on the documented plugin attribute, interface, configuration convention, and result object; the resolver and `HearMeService` are not provider extension APIs.
+
 For a synthesis operation, HearMe:
 
 1. Reads the active plugin ID from `hear_me.settings`.

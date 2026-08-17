@@ -31,6 +31,7 @@ class HearMeNodeAudioQueue {
 
   public function __construct(
     protected ConfigFactoryInterface $configFactory,
+    protected TtsProviderResolver $providerResolver,
     protected EntityTypeManagerInterface $entityTypeManager,
     protected QueueFactory $queueFactory,
     protected StateInterface $state,
@@ -117,12 +118,12 @@ class HearMeNodeAudioQueue {
   /**
    * Builds a queue item for a node enrolled in TTS pre-generation.
    */
-  public function buildQueueItem(EntityInterface $entity): ?array {
+  public function buildQueueItem(EntityInterface $entity, ?string $providerId = NULL): ?array {
     if (!$this->isNodeQueuedForAudio($entity)) {
       return NULL;
     }
 
-    $source = $this->buildNodeAudioSource($entity);
+    $source = $this->buildNodeAudioSource($entity, $providerId);
     if ($source === NULL) {
       return NULL;
     }
@@ -135,7 +136,7 @@ class HearMeNodeAudioQueue {
   /**
    * Builds a queue item from the current stored node state.
    */
-  public function buildCurrentQueueItem(int $nid): ?array {
+  public function buildCurrentQueueItem(int $nid, ?string $providerId = NULL): ?array {
     try {
       $node = $this->entityTypeManager->getStorage('node')->load($nid);
     }
@@ -147,7 +148,7 @@ class HearMeNodeAudioQueue {
       return NULL;
     }
 
-    return $node instanceof EntityInterface ? $this->buildQueueItem($node) : NULL;
+    return $node instanceof EntityInterface ? $this->buildQueueItem($node, $providerId) : NULL;
   }
 
   /**
@@ -158,17 +159,23 @@ class HearMeNodeAudioQueue {
       return FALSE;
     }
 
-    $current = $this->buildNodeAudioSource($entity);
+    $original = $entity->getOriginal();
+    $hasOriginal = $original instanceof EntityInterface && $original->getEntityTypeId() === 'node';
+    $providerId = NULL;
+    if ($this->usesProviderDefaultLanguage($entity) || ($hasOriginal && $this->usesProviderDefaultLanguage($original))) {
+      $providerId = $this->providerResolver->getActiveProviderId();
+    }
+
+    $current = $this->buildNodeAudioSource($entity, $providerId);
     if ($current === NULL) {
       return FALSE;
     }
 
-    $original = $entity->getOriginal();
-    if (!$original instanceof EntityInterface || $original->getEntityTypeId() !== 'node') {
+    if (!$hasOriginal) {
       return TRUE;
     }
 
-    $previous = $this->buildNodeAudioSource($original);
+    $previous = $this->buildNodeAudioSource($original, $providerId);
     if ($previous === NULL) {
       return TRUE;
     }
@@ -203,7 +210,7 @@ class HearMeNodeAudioQueue {
   /**
    * Builds normalized node audio source data independent of queue enrollment.
    */
-  protected function buildNodeAudioSource(EntityInterface $entity): ?array {
+  protected function buildNodeAudioSource(EntityInterface $entity, ?string $providerId = NULL): ?array {
     if ($entity->getEntityTypeId() !== 'node') {
       return NULL;
     }
@@ -227,7 +234,7 @@ class HearMeNodeAudioQueue {
       return NULL;
     }
 
-    $lang = $this->resolveNodeLanguage($entity);
+    $lang = $this->resolveNodeLanguage($entity, $providerId);
     $sourceConfigHash = $this->buildSourceConfigHash($entity->bundle(), $sourceConfig);
 
     return [
@@ -349,27 +356,26 @@ class HearMeNodeAudioQueue {
   /**
    * Resolves the node language used for queued audio generation.
    */
-  protected function resolveNodeLanguage(EntityInterface $entity): string {
+  protected function resolveNodeLanguage(EntityInterface $entity, ?string $providerId = NULL): string {
     $lang = $entity->language()->getId();
-    if (!in_array($lang, [
+    if (!$this->usesProviderDefaultLanguage($entity)) {
+      return $lang;
+    }
+
+    $providerId ??= $this->providerResolver->getActiveProviderId();
+    return $this->providerResolver->getDefaultLanguage($providerId);
+  }
+
+  /**
+   * Checks whether an entity needs the active provider's default language.
+   */
+  protected function usesProviderDefaultLanguage(EntityInterface $entity): bool {
+    return in_array($entity->language()->getId(), [
       '',
       LanguageInterface::LANGCODE_NOT_SPECIFIED,
       LanguageInterface::LANGCODE_NOT_APPLICABLE,
       LanguageInterface::LANGCODE_DEFAULT,
-    ], TRUE)) {
-      return $lang;
-    }
-
-    $providerKey = (string) $this->configFactory->get('hear_me.settings')->get('provider');
-    $defaultLang = (string) $this->configFactory->get('hear_me.provider.' . $providerKey)->get('default_lang');
-    if ($defaultLang === '') {
-      throw new \RuntimeException(sprintf(
-        'HearMe: the "default_lang" key is missing from hear_me.provider.%s configuration.',
-        $providerKey,
-      ));
-    }
-
-    return $defaultLang;
+    ], TRUE);
   }
 
   /**

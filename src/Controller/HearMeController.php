@@ -18,7 +18,11 @@ class HearMeController extends ControllerBase {
 
   protected HearMeRateLimiter $rateLimiter;
 
-  public function __construct(HearMeService $ttsService, HearMeInputValidator $inputValidator, HearMeRateLimiter $rateLimiter) {
+  public function __construct(
+    HearMeService $ttsService,
+    HearMeInputValidator $inputValidator,
+    HearMeRateLimiter $rateLimiter,
+  ) {
     $this->ttsService = $ttsService;
     $this->inputValidator = $inputValidator;
     $this->rateLimiter = $rateLimiter;
@@ -38,21 +42,22 @@ class HearMeController extends ControllerBase {
       return $this->noStoreResponse($validation->errorMessage, 400);
     }
 
-    $providerKey = $this->ttsService->getProviderKey();
-    $rateLimitError = $this->rateLimiter->check($providerKey);
+    $providerId = $validation->providerId;
+    $rateLimitError = $this->rateLimiter->check($providerId);
     if ($rateLimitError !== NULL) {
       return $this->noStoreResponse($rateLimitError, 429);
     }
 
-    $this->rateLimiter->register($providerKey);
+    $this->rateLimiter->register($providerId);
 
     $source = $this->ttsService->getTrustedRuntimeSource(
       $validation->text,
       $validation->lang,
       $validation->source,
       $validation->cacheToken,
+      $providerId,
     );
-    $audio = $this->ttsService->getAudio($validation->text, $validation->lang, $source);
+    $audio = $this->ttsService->getAudio($validation->text, $validation->lang, $source, $providerId);
     if ($audio === NULL) {
       return $this->noStoreResponse('Synthesis failed', 500);
     }

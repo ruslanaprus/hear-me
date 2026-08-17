@@ -31,7 +31,7 @@ class HearMeSetupStatus {
     protected StateInterface $state,
     protected DateFormatterInterface $dateFormatter,
     protected TimeInterface $time,
-    protected HearMeService $ttsService,
+    protected TtsProviderResolver $providerResolver,
     protected HearMeAudioFieldValidator $audioFieldValidator,
   ) {}
 
@@ -57,16 +57,20 @@ class HearMeSetupStatus {
    */
   public function testProviderConnection(): array {
     $providerKey = $this->getConfiguredProviderKey();
-    $providers = $this->ttsService->getProviders();
-
-    if ($providerKey === '' || !isset($providers[$providerKey])) {
+    if ($providerKey === '') {
       return $this->storeProviderConnectionResult($providerKey, 'error', (string) $this->t('The configured provider plugin is missing or not discoverable.'));
     }
 
-    $provider = $providers[$providerKey];
-    $lang = (string) $this->configFactory->get('hear_me.provider.' . $providerKey)->get('default_lang');
-    if ($lang === '') {
-      $supported = $provider->getSupportedLanguages();
+    $provider = $this->providerResolver->getProvider($providerKey);
+    if ($provider === NULL) {
+      return $this->storeProviderConnectionResult($providerKey, 'error', (string) $this->t('The configured provider plugin is missing or not discoverable.'));
+    }
+
+    try {
+      $lang = $this->providerResolver->getDefaultLanguage($providerKey);
+    }
+    catch (\RuntimeException) {
+      $supported = $this->providerResolver->getSupportedLanguages($providerKey);
       $lang = (string) ($supported[0] ?? 'en');
     }
 
@@ -83,17 +87,17 @@ class HearMeSetupStatus {
 
   protected function getProviderConfiguredStatus(): array {
     $providerKey = $this->getConfiguredProviderKey();
-    $providers = $this->ttsService->getProviders();
+    $definitions = $this->providerResolver->getProviderDefinitions();
 
     if ($providerKey === '') {
       return $this->item('provider_configured', $this->t('Provider plugin configured'), 'error', $this->t('Missing'), $this->t('No active provider plugin is configured.'));
     }
 
-    if (!isset($providers[$providerKey])) {
+    if (!isset($definitions[$providerKey])) {
       return $this->item('provider_configured', $this->t('Provider plugin configured'), 'error', $this->t('Failed'), $this->t('Provider plugin @provider is configured but is not discoverable.', ['@provider' => $providerKey]));
     }
 
-    $definition = $providers[$providerKey]->getPluginDefinition();
+    $definition = $definitions[$providerKey];
     return $this->item('provider_configured', $this->t('Provider plugin configured'), 'ok', $this->t('OK'), $this->t('@provider plugin is active.', ['@provider' => $definition['label']]));
   }
 
@@ -225,8 +229,8 @@ class HearMeSetupStatus {
       return $providerKey;
     }
 
-    $providers = $this->ttsService->getProviders();
-    return (string) array_key_first($providers);
+    $definitions = $this->providerResolver->getProviderDefinitions();
+    return (string) array_key_first($definitions);
   }
 
   protected function storeProviderConnectionResult(string $providerKey, string $status, string $message): array {
@@ -247,7 +251,7 @@ class HearMeSetupStatus {
       return '';
     }
 
-    return hash('sha256', serialize($this->configFactory->get('hear_me.provider.' . $providerKey)->getRawData()));
+    return hash('sha256', serialize($this->providerResolver->getProviderConfigurationHashInput($providerKey)));
   }
 
   protected function item(string $id, $label, string $state, $status, $message): array {

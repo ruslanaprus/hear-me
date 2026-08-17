@@ -10,6 +10,7 @@ use Drupal\filter\Plugin\FilterInterface;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
 use Drupal\Core\Url;
 use Drupal\hear_me\Service\HearMeService;
+use Drupal\hear_me\Service\TtsProviderResolver;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
@@ -30,35 +31,53 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 class FilterTtsPlayback extends FilterBase implements ContainerFactoryPluginInterface {
 
   /**
-   * The HearMe TTS service, used to resolve the effective language.
+   * The HearMe TTS service, used to create cache tokens.
    *
    * @var \Drupal\hear_me\Service\HearMeService
    */
   protected HearMeService $ttsService;
 
+  protected TtsProviderResolver $providerResolver;
+
+  public function __construct(
+    array $configuration,
+    $plugin_id,
+    $plugin_definition,
+    HearMeService $ttsService,
+    TtsProviderResolver $providerResolver,
+  ) {
+    parent::__construct($configuration, $plugin_id, $plugin_definition);
+    $this->ttsService = $ttsService;
+    $this->providerResolver = $providerResolver;
+  }
+
   public static function create(ContainerInterface $container, array $configuration, $plugin_id, $plugin_definition): static {
-    $instance = parent::create($container, $configuration, $plugin_id, $plugin_definition);
-    $instance->ttsService = $container->get('hear_me.service');
-    return $instance;
+    return new static(
+      $configuration,
+      $plugin_id,
+      $plugin_definition,
+      $container->get('hear_me.service'),
+      $container->get('hear_me.provider_resolver'),
+    );
   }
 
   public function process($text, $langcode): FilterProcessResult {
-    $providerKey = $this->ttsService->getProviderKey();
+    $providerId = $this->providerResolver->getActiveProviderId();
     $effectiveLang = ($langcode && $langcode !== 'und')
       ? $langcode
-      : $this->ttsService->getDefaultLang();
+      : $this->providerResolver->getDefaultLanguage($providerId);
 
     $pattern = '/<tts>(.*?)<\/tts>/s';
     $hasTtsMarkup = FALSE;
     $ttsService = $this->ttsService;
-    $newText = preg_replace_callback($pattern, function ($matches) use ($effectiveLang, &$hasTtsMarkup, $ttsService) {
+    $newText = preg_replace_callback($pattern, function ($matches) use ($effectiveLang, $providerId, &$hasTtsMarkup, $ttsService) {
       $hasTtsMarkup = TRUE;
       $raw  = $matches[1];
       $lang = htmlspecialchars($effectiveLang, ENT_QUOTES, 'UTF-8');
       $plainText = html_entity_decode(strip_tags($raw), ENT_QUOTES | ENT_HTML5, 'UTF-8');
       $plainText = str_replace("\u{00A0}", ' ', $plainText);
       $escaped   = htmlspecialchars($plainText, ENT_QUOTES, 'UTF-8');
-      $cacheToken = htmlspecialchars($ttsService->buildCacheToken($plainText, $effectiveLang, 'inline'), ENT_QUOTES, 'UTF-8');
+      $cacheToken = htmlspecialchars($ttsService->buildCacheToken($plainText, $effectiveLang, 'inline', $providerId), ENT_QUOTES, 'UTF-8');
 
       return '<span class="tts-text">' . $raw . '</span>
               <button class="tts-play" data-text="' . $escaped . '" data-lang="' . $lang . '" data-cache-token="' . $cacheToken . '" aria-label="Play text-to-speech" tabindex="0">🔊</button>
@@ -80,7 +99,7 @@ class FilterTtsPlayback extends FilterBase implements ContainerFactoryPluginInte
       ]);
       $result->setCacheTags([
         'config:hear_me.settings',
-        'config:hear_me.provider.' . $providerKey,
+        'config:hear_me.provider.' . $providerId,
       ]);
     }
 

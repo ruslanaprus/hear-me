@@ -10,6 +10,7 @@ use Drupal\file\Entity\File;
 use Drupal\hear_me\Plugin\QueueWorker\HearMeQueueWorker;
 use Drupal\hear_me\Service\HearMeNodeAudioQueue;
 use Drupal\hear_me\Service\HearMeService;
+use Drupal\hear_me\Service\TtsProviderResolver;
 use Drupal\KernelTests\Core\Entity\EntityKernelTestBase;
 use Drupal\media\Entity\Media;
 use Drupal\media\MediaInterface;
@@ -66,6 +67,8 @@ class HearMeQueueTest extends EntityKernelTestBase {
    * Tests stale queue items are ignored before synthesis starts.
    */
   public function testStaleQueueItemIsSkipped(): void {
+    $this->config('hear_me.settings')->set('provider', 'piper')->save();
+
     $tts_service = $this->createMock(HearMeService::class);
     $tts_service->expects($this->never())->method('synthesize');
     $tts_service->expects($this->never())->method('attachMediaToNode');
@@ -73,7 +76,7 @@ class HearMeQueueTest extends EntityKernelTestBase {
     $node_audio_queue = $this->createMock(HearMeNodeAudioQueue::class);
     $node_audio_queue->expects($this->once())
       ->method('buildCurrentQueueItem')
-      ->with(1)
+      ->with(1, 'piper')
       ->willReturn([
         'text' => 'Current text',
         'lang' => 'en',
@@ -83,12 +86,91 @@ class HearMeQueueTest extends EntityKernelTestBase {
       ->method('clearQueuedHash')
       ->with(1, str_repeat('b', 64));
 
-    $worker = new HearMeQueueWorker([], 'hear_me_tts', [], $tts_service, $node_audio_queue);
+    $provider_resolver = $this->container->get('hear_me.provider_resolver');
+    $this->assertInstanceOf(TtsProviderResolver::class, $provider_resolver);
+    $worker = new HearMeQueueWorker([], 'hear_me_tts', [], $tts_service, $node_audio_queue, $provider_resolver);
     $worker->processItem([
       'nid' => 1,
       'text' => 'Old text',
       'lang' => 'en',
       'content_hash' => str_repeat('b', 64),
+    ]);
+  }
+
+  /**
+   * Tests one provider ID is used to rebuild and synthesize a queue item.
+   */
+  public function testQueueItemUsesCapturedProviderId(): void {
+    $this->config('hear_me.settings')->set('provider', 'test')->save();
+
+    $content_hash = str_repeat('a', 64);
+    $tts_service = $this->createMock(HearMeService::class);
+    $tts_service->expects($this->once())
+      ->method('synthesize')
+      ->with('Current text', 'en', 'test')
+      ->willReturn(NULL);
+    $tts_service->expects($this->never())->method('attachMediaToNode');
+
+    $node_audio_queue = $this->createMock(HearMeNodeAudioQueue::class);
+    $node_audio_queue->expects($this->once())
+      ->method('buildCurrentQueueItem')
+      ->with(1, 'test')
+      ->willReturn([
+        'text' => 'Current text',
+        'lang' => 'en',
+        'content_hash' => $content_hash,
+      ]);
+    $node_audio_queue->expects($this->once())
+      ->method('clearQueuedHash')
+      ->with(1, $content_hash);
+
+    $provider_resolver = $this->container->get('hear_me.provider_resolver');
+    $this->assertInstanceOf(TtsProviderResolver::class, $provider_resolver);
+    $worker = new HearMeQueueWorker([], 'hear_me_tts', [], $tts_service, $node_audio_queue, $provider_resolver);
+    $worker->processItem([
+      'nid' => 1,
+      'text' => 'Current text',
+      'lang' => 'en',
+      'content_hash' => $content_hash,
+    ]);
+  }
+
+  /**
+   * Tests a legacy item uses the default language before its stale check.
+   */
+  public function testLegacyQueueItemUsesDefaultLanguageBeforeStaleCheck(): void {
+    $this->config('hear_me.settings')->set('provider', 'piper')->save();
+
+    $tts_service = $this->createMock(HearMeService::class);
+    $tts_service->expects($this->never())->method('synthesize');
+    $tts_service->expects($this->never())->method('attachMediaToNode');
+
+    $legacy_hash = str_repeat('c', 64);
+    $current_hash = str_repeat('d', 64);
+    $node_audio_queue = $this->createMock(HearMeNodeAudioQueue::class);
+    $node_audio_queue->expects($this->once())
+      ->method('buildContentHash')
+      ->with('Legacy queue text', 'uk')
+      ->willReturn($legacy_hash);
+    $node_audio_queue->expects($this->once())
+      ->method('buildCurrentQueueItem')
+      ->with(1, 'piper')
+      ->willReturn([
+        'text' => 'Legacy queue text',
+        'lang' => 'uk',
+        'content_hash' => $current_hash,
+      ]);
+    $node_audio_queue->expects($this->once())
+      ->method('clearQueuedHash')
+      ->with(1, $legacy_hash);
+
+    $this->config('hear_me.provider.piper')->set('default_lang', 'uk')->save();
+    $provider_resolver = $this->container->get('hear_me.provider_resolver');
+    $this->assertInstanceOf(TtsProviderResolver::class, $provider_resolver);
+    $worker = new HearMeQueueWorker([], 'hear_me_tts', [], $tts_service, $node_audio_queue, $provider_resolver);
+    $worker->processItem([
+      'nid' => 1,
+      'text' => 'Legacy queue text',
     ]);
   }
 
@@ -246,6 +328,35 @@ class HearMeQueueTest extends EntityKernelTestBase {
 
     $this->assertSame($titleOnly['text'], $introOnly['text']);
     $this->assertNotSame($titleOnly['content_hash'], $introOnly['content_hash']);
+  }
+
+  /**
+   * Tests explicit-language source comparison does not require a provider.
+   */
+  public function testExplicitLanguageSourceChangeWithoutActiveProvider(): void {
+    $this->createContentType('article', 'Article');
+    $node = Node::create([
+      'type' => 'article',
+      'title' => 'Original title',
+      'langcode' => 'en',
+    ]);
+    $node->save();
+
+    $this->config('hear_me.settings')
+      ->set('queue_bundles', ['article'])
+      ->clear('provider')
+      ->save();
+
+    $node->setTitle('Updated title');
+    $node->save();
+
+    $queue = \Drupal::queue('hear_me_tts');
+    $this->assertSame(1, $queue->numberOfItems());
+    $item = $queue->claimItem();
+    $this->assertNotFalse($item);
+    $this->assertSame('Updated title', $item->data['text']);
+    $this->assertSame('en', $item->data['lang']);
+    $queue->deleteItem($item);
   }
 
   /**

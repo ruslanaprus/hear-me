@@ -3,6 +3,7 @@
 namespace Drupal\hear_me\Form;
 
 use Drupal\Component\Plugin\ConfigurableInterface;
+use Drupal\Core\Config\Config;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Config\TypedConfigManagerInterface;
 use Drupal\Core\Entity\EntityFieldManagerInterface;
@@ -124,6 +125,21 @@ class HearMeSettingsForm extends ConfigFormBase {
       $runtimeCacheScheme = 'private';
     }
 
+    $backfillConfirmation = $form_state->get('hear_me_backfill_confirmation');
+    $audioFieldName = $backfillConfirmation['field_name'] ?? $config->get('tts_audio_field') ?? 'field_tts_audio';
+    $bundleOptions = $this->getNodeBundleOptions();
+
+    $this->buildProviderSetupSection($form, $providerOptions, $providerKey);
+    $this->buildRuntimeCacheSection($form, $config, $runtimeCacheScheme);
+    $this->buildLimitsAndQuotasSection($form, $config);
+    $this->buildQueueAndAudioFieldSection($form, $config, $backfillConfirmation, $audioFieldName, $bundleOptions);
+    $this->buildExistingContentBackfillSection($form, $backfillConfirmation);
+    $this->buildProviderConfigurationSection($form, $form_state, $providerDefinitions, $providerKey);
+
+    return parent::buildForm($form, $form_state);
+  }
+
+  private function buildProviderSetupSection(array &$form, array $providerOptions, mixed $providerKey): void {
     $form['setup_status'] = $this->buildSetupStatusPanel();
 
     $form['provider'] = [
@@ -143,7 +159,9 @@ class HearMeSettingsForm extends ConfigFormBase {
         $this->t('The Anonymous role currently has the Use TTS playback permission. This exposes a public resource-consuming endpoint; keep strict IP limits enabled and avoid public runtime caching.')
       );
     }
+  }
 
+  private function buildRuntimeCacheSection(array &$form, Config $config, string $runtimeCacheScheme): void {
     $form['cache_enabled'] = [
       '#type'          => 'checkbox',
       '#title'         => $this->t('Enable file-based caching'),
@@ -257,7 +275,9 @@ class HearMeSettingsForm extends ConfigFormBase {
       '#submit' => ['::clearRuntimeCacheSubmit'],
       '#limit_validation_errors' => [],
     ];
+  }
 
+  private function buildLimitsAndQuotasSection(array &$form, Config $config): void {
     $form['rate_limits'] = [
       '#type' => 'details',
       '#title' => $this->t('Rate limits and quotas'),
@@ -342,10 +362,9 @@ class HearMeSettingsForm extends ConfigFormBase {
       '#step' => 1,
       '#required' => TRUE,
     ];
+  }
 
-    $backfillConfirmation = $form_state->get('hear_me_backfill_confirmation');
-    $audioFieldName = $backfillConfirmation['field_name'] ?? $config->get('tts_audio_field') ?? 'field_tts_audio';
-
+  private function buildQueueAndAudioFieldSection(array &$form, Config $config, mixed $backfillConfirmation, mixed $audioFieldName, array $bundleOptions): void {
     $form['tts_audio_field'] = [
       '#type'          => 'textfield',
       '#title'         => $this->t('TTS Audio Field'),
@@ -353,8 +372,6 @@ class HearMeSettingsForm extends ConfigFormBase {
       '#default_value' => $audioFieldName,
       '#required'      => TRUE,
     ];
-
-    $bundleOptions = $this->getNodeBundleOptions();
 
     $form['queue_bundles'] = [
       '#type'          => 'checkboxes',
@@ -417,7 +434,9 @@ class HearMeSettingsForm extends ConfigFormBase {
         ['audio_field_setup', 'bundles'],
       ],
     ];
+  }
 
+  private function buildExistingContentBackfillSection(array &$form, mixed $backfillConfirmation): void {
     $form['existing_content_queue'] = [
       '#type' => 'details',
       '#title' => $this->t('Existing content audio generation'),
@@ -493,7 +512,9 @@ class HearMeSettingsForm extends ConfigFormBase {
         ],
       ];
     }
+  }
 
+  private function buildProviderConfigurationSection(array &$form, FormStateInterface $form_state, array $providerDefinitions, mixed $providerKey): void {
     $form['provider_settings'] = [
       '#type'       => 'fieldset',
       '#title'      => $this->t('Provider Settings'),
@@ -508,8 +529,6 @@ class HearMeSettingsForm extends ConfigFormBase {
         $form['provider_settings'] = $provider->buildConfigurationForm($form['provider_settings'], $subformState);
       }
     }
-
-    return parent::buildForm($form, $form_state);
   }
 
   public function validateForm(array &$form, FormStateInterface $form_state): void {

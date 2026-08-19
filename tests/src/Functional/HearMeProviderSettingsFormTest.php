@@ -79,4 +79,92 @@ class HearMeProviderSettingsFormTest extends BrowserTestBase {
     $this->assertSame('https://stored.example.com/tts', $this->config('hear_me.provider.piper')->get('endpoint'));
   }
 
+  /**
+   * Tests the settings form structure relied on by callbacks and submissions.
+   */
+  public function testSettingsFormStructureContracts(): void {
+    $this->drupalCreateContentType([
+      'type' => 'article',
+      'name' => 'Article',
+    ]);
+    $formObject = $this->container->get('class_resolver')
+      ->getInstanceFromDefinition(HearMeSettingsForm::class);
+    $formState = (new FormState())->set('hear_me_backfill_confirmation', [
+      'field_name' => 'field_tts_audio',
+      'bundles' => ['article'],
+      'bundle_labels' => ['article' => 'Article'],
+      'source_fields' => ['article' => ['title' => TRUE, 'fields' => []]],
+      'published_only' => TRUE,
+      'missing_only' => TRUE,
+      'include_unpublished' => FALSE,
+      'requeue_existing' => FALSE,
+      'confirm_unpublished_public_audio' => FALSE,
+      'candidate_count' => 0,
+    ]);
+
+    $form = $this->container->get('form_builder')->buildForm($formObject, $formState);
+
+    $expectedOrder = [
+      'setup_status',
+      'provider',
+      'cache_enabled',
+      'runtime_cache',
+      'rate_limits',
+      'max_request_bytes',
+      'max_text_length',
+      'tts_audio_field',
+      'queue_bundles',
+      'queue_source_fields',
+      'queue_generated_audio_public_warning',
+      'replace_existing_generated_audio',
+      'overwrite_manual_audio',
+      'audio_field_setup',
+      'existing_content_queue',
+      'provider_settings',
+    ];
+    $this->assertSame($expectedOrder, array_values(array_intersect(array_keys($form), $expectedOrder)));
+
+    $this->assertSame('::ajaxProviderSettings', $form['provider']['#ajax']['callback']);
+    $this->assertSame('provider-settings-wrapper', $form['provider']['#ajax']['wrapper']);
+    $this->assertSame(['runtime_cache_scheme'], $form['runtime_cache']['runtime_cache_scheme']['#parents']);
+    $this->assertSame([], $form['runtime_cache']['clear_runtime_cache']['#limit_validation_errors']);
+    $this->assertSame(['rate_limit_window_seconds'], $form['rate_limits']['rate_limit_window_seconds']['#parents']);
+
+    $this->assertTrue($form['queue_source_fields']['#tree']);
+    $this->assertSame(
+      [':input[name="queue_bundles[article]"]' => ['checked' => TRUE]],
+      $form['queue_source_fields']['article']['#states']['visible'],
+    );
+    $this->assertSame(
+      ['queue_source_fields', 'article', 'title'],
+      $form['queue_source_fields']['article']['title']['#parents'],
+    );
+
+    $this->assertTrue($form['audio_field_setup']['#tree']);
+    $this->assertSame(
+      [
+        ['tts_audio_field'],
+        ['audio_field_setup', 'bundles'],
+      ],
+      $form['audio_field_setup']['create_audio_field']['#limit_validation_errors'],
+    );
+
+    $this->assertTrue($form['existing_content_queue']['#tree']);
+    $this->assertSame(
+      [
+        ['tts_audio_field'],
+        ['queue_bundles'],
+        ['queue_source_fields'],
+        ['existing_content_queue'],
+      ],
+      $form['existing_content_queue']['confirm_queue_existing_content']['#limit_validation_errors'],
+    );
+    $this->assertSame('::queueExistingContentSubmit', $form['existing_content_queue']['confirm_queue_existing_content']['#submit'][0]);
+    $this->assertSame([], $form['existing_content_queue']['cancel_queue_existing_content']['#limit_validation_errors']);
+
+    $this->assertTrue($form['provider_settings']['#tree']);
+    $this->assertSame('provider-settings-wrapper', $form['provider_settings']['#attributes']['id']);
+    $this->assertSame(['provider_settings', 'endpoint'], $form['provider_settings']['endpoint']['#parents']);
+  }
+
 }

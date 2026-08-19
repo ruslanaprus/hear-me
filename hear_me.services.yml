@@ -93,12 +93,18 @@ services:
     class: Drupal\hear_me\Service\HearMeService
     arguments:
       - '@hear_me.provider_resolver'
-      - '@entity_type.manager'
+      - '@hear_me.audio_media_factory'
       - '@hear_me.file_helper'
       - '@hear_me.cache_manager'
       - '@lock'
       - '@logger.factory'
       - '@private_key'
+
+  # Creates persistent File and Media entities for generated audio.
+  hear_me.audio_media_factory:
+    class: Drupal\hear_me\Service\AudioMediaFactory
+    arguments:
+      - '@entity_type.manager'
 
   # Attaches generated audio Media to configured node fields.
   hear_me.node_audio_attacher:

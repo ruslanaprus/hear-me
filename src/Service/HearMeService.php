@@ -2,18 +2,17 @@
 
 namespace Drupal\hear_me\Service;
 
-use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Lock\LockBackendInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\Core\PrivateKey;
 use Drupal\hear_me\TtsAudioResult;
 use Drupal\hear_me\TtsSynthesisResult;
-use Drupal\media\Entity\Media;
+use Drupal\media\MediaInterface;
 
 class HearMeService {
 
   protected TtsProviderResolver $providerResolver;
-  protected EntityTypeManagerInterface $entityTypeManager;
+  protected AudioMediaFactory $audioMediaFactory;
   protected TtsFileHelperInterface $fileHelper;
   protected TtsCacheManager $cacheManager;
   protected LockBackendInterface $lock;
@@ -22,7 +21,7 @@ class HearMeService {
 
   public function __construct(
     TtsProviderResolver $providerResolver,
-    EntityTypeManagerInterface $entityTypeManager,
+    AudioMediaFactory $audioMediaFactory,
     TtsFileHelperInterface $fileHelper,
     TtsCacheManager $cacheManager,
     LockBackendInterface $lock,
@@ -30,7 +29,7 @@ class HearMeService {
     PrivateKey $privateKey,
   ) {
     $this->providerResolver  = $providerResolver;
-    $this->entityTypeManager = $entityTypeManager;
+    $this->audioMediaFactory = $audioMediaFactory;
     $this->fileHelper        = $fileHelper;
     $this->cacheManager      = $cacheManager;
     $this->lock              = $lock;
@@ -52,13 +51,13 @@ class HearMeService {
    * or reuses a Media entity because queue-based pre-generation attaches audio
    * to content.
    */
-  public function synthesize(string $text, string $lang, ?string $providerId = NULL): ?Media {
+  public function synthesize(string $text, string $lang, ?string $providerId = NULL): ?MediaInterface {
     $audio = $this->generateAudio($text, $lang, 'entity', TRUE, $providerId);
     if ($audio === NULL || $audio->uri === NULL) {
       return NULL;
     }
 
-    return $this->createMediaFromUri($audio->uri, $lang, $text);
+    return $this->audioMediaFactory->createFromUri($audio->uri, $lang, $text);
   }
 
   /**
@@ -192,44 +191,6 @@ class HearMeService {
     $text = str_replace("\xc2\xa0", ' ', $text);
     $text = preg_replace('/[ \t\r\n]+/u', ' ', $text) ?? $text;
     return trim($text);
-  }
-
-  /**
-   * Creates or reuses a managed File entity and wraps it in a Media entity.
-   */
-  private function createMediaFromUri(string $uri, string $lang, string $text): ?Media {
-    $fileStorage   = $this->entityTypeManager->getStorage('file');
-    $existingFiles = $fileStorage->loadByProperties(['uri' => $uri]);
-
-    if ($existingFiles) {
-      $fileEntity = reset($existingFiles);
-    }
-    else {
-      $fileEntity = $fileStorage->create([
-        'uri'    => $uri,
-        'status' => 1,
-      ]);
-      $fileEntity->save();
-    }
-
-    $mediaStorage = $this->entityTypeManager->getStorage('media');
-    $existingMedia = $mediaStorage->loadByProperties([
-      'field_hear_me_audio_file' => $fileEntity->id(),
-    ]);
-    if ($existingMedia) {
-      return reset($existingMedia);
-    }
-
-    $media = Media::create([
-      'bundle' => 'hear_me_audio',
-      'name' => 'TTS-' . $lang . '-' . md5($text),
-      'field_hear_me_audio_file' => [
-        'target_id' => $fileEntity->id(),
-      ],
-    ]);
-    $media->save();
-
-    return $media;
   }
 
 }

@@ -6,8 +6,9 @@ namespace Drupal\hear_me;
  * Value object returned by TTS provider plugins after synthesis.
  *
  * Providers are responsible for synthesising audio bytes and describing their
- * audio format. HearMeService handles URI generation, runtime cache
- * persistence, and optional Media entity creation for pre-generated audio.
+ * audio format. HearMe coordinates URI generation and runtime cache
+ * persistence, while its audio Media factory creates persistent entities for
+ * pre-generated audio.
  *
  * Both properties are immutable after construction; the object should be
  * treated as read-only by all consumers.

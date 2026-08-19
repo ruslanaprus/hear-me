@@ -1,0 +1,22 @@
+<?php
+
+use Drupal\file\FileInterface;
+use Drupal\media\MediaInterface;
+
+/**
+ * Implements hook_file_presave().
+ */
+function hear_me_test_file_presave(FileInterface $file): void {
+  if (\Drupal::state()->get('hear_me_test.fail_file_save', FALSE)) {
+    throw new \RuntimeException('Simulated File save failure.');
+  }
+}
+
+/**
+ * Implements hook_media_presave().
+ */
+function hear_me_test_media_presave(MediaInterface $media): void {
+  if (\Drupal::state()->get('hear_me_test.fail_media_save', FALSE)) {
+    throw new \RuntimeException('Simulated Media save failure.');
+  }
+}

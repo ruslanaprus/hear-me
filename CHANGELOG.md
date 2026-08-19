@@ -32,6 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Runtime playback cache defaults to private files.
 - Active provider selection and metadata are coordinated by an internal resolver, while provider plugins remain the supported extension API.
 - Existing-content backfill captures one active provider identity and stops with a restart message if that provider changes between Batch API chunks.
+- Queue workers delegate node Media attachment and replacement-policy decisions to a focused internal service instead of the synthesis orchestrator.
 
 ### Security
 

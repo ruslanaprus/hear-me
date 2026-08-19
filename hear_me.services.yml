@@ -92,7 +92,6 @@ services:
   hear_me.service:
     class: Drupal\hear_me\Service\HearMeService
     arguments:
-      - '@config.factory'
       - '@hear_me.provider_resolver'
       - '@entity_type.manager'
       - '@hear_me.file_helper'
@@ -100,3 +99,11 @@ services:
       - '@lock'
       - '@logger.factory'
       - '@private_key'
+
+  # Attaches generated audio Media to configured node fields.
+  hear_me.node_audio_attacher:
+    class: Drupal\hear_me\Service\NodeAudioAttacher
+    arguments:
+      - '@config.factory'
+      - '@entity_type.manager'
+      - '@logger.factory'

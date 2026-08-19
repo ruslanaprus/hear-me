@@ -138,6 +138,8 @@ Queue-generated entity audio is stored under `public://tts/` as Drupal Media/Fil
 
 When a queue worker attaches generated audio, HearMe saves the node to update the configured audio field. That save can update the node changed time and trigger normal Drupal save side effects such as search indexing, cache invalidation, and integrations. HearMe does not intentionally create a new revision and does not change publication or moderation state; Drupal core or contrib workflow modules may still enforce their own revision behaviour during save.
 
+The queue worker delegates node field updates and replacement-policy decisions to an internal node-audio attacher. That service and the synthesis orchestrator are implementation details, not supported extension APIs; provider plugins remain the supported TTS integration point.
+
 ## Documentation
 
 - [Installation](docs/installation.md)

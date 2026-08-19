@@ -8,6 +8,7 @@ use Drupal\Core\Queue\QueueWorkerBase;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
 use Drupal\hear_me\Service\HearMeNodeAudioQueue;
 use Drupal\hear_me\Service\HearMeService;
+use Drupal\hear_me\Service\NodeAudioAttacher;
 use Drupal\hear_me\Service\TtsProviderResolver;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
@@ -23,6 +24,8 @@ class HearMeQueueWorker extends QueueWorkerBase implements ContainerFactoryPlugi
 
   protected HearMeService $ttsService;
 
+  protected NodeAudioAttacher $nodeAudioAttacher;
+
   protected HearMeNodeAudioQueue $nodeAudioQueue;
 
   protected TtsProviderResolver $providerResolver;
@@ -32,11 +35,13 @@ class HearMeQueueWorker extends QueueWorkerBase implements ContainerFactoryPlugi
     $plugin_id,
     $plugin_definition,
     HearMeService $ttsService,
+    NodeAudioAttacher $nodeAudioAttacher,
     HearMeNodeAudioQueue $nodeAudioQueue,
     TtsProviderResolver $providerResolver,
   ) {
     parent::__construct($configuration, $plugin_id, $plugin_definition);
     $this->ttsService = $ttsService;
+    $this->nodeAudioAttacher = $nodeAudioAttacher;
     $this->nodeAudioQueue = $nodeAudioQueue;
     $this->providerResolver = $providerResolver;
   }
@@ -52,6 +57,7 @@ class HearMeQueueWorker extends QueueWorkerBase implements ContainerFactoryPlugi
       $plugin_id,
       $plugin_definition,
       $container->get('hear_me.service'),
+      $container->get('hear_me.node_audio_attacher'),
       $container->get('hear_me.node_audio_queue'),
       $container->get('hear_me.provider_resolver'),
     );
@@ -97,7 +103,7 @@ class HearMeQueueWorker extends QueueWorkerBase implements ContainerFactoryPlugi
     $media = $this->ttsService->synthesize($current['text'], $current['lang'], $providerId);
 
     if ($media) {
-      $this->ttsService->attachMediaToNode($nid, $media);
+      $this->nodeAudioAttacher->attach($nid, $media);
     }
 
     $this->nodeAudioQueue->clearQueuedHash($nid, $queuedHash);

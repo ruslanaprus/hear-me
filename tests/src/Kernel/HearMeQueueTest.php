@@ -11,6 +11,7 @@ use Drupal\hear_me\Plugin\QueueWorker\HearMeQueueWorker;
 use Drupal\hear_me\Service\HearMeExistingContentQueue;
 use Drupal\hear_me\Service\HearMeNodeAudioQueue;
 use Drupal\hear_me\Service\HearMeService;
+use Drupal\hear_me\Service\NodeAudioAttacher;
 use Drupal\hear_me\Service\TtsProviderResolver;
 use Drupal\KernelTests\Core\Entity\EntityKernelTestBase;
 use Drupal\media\Entity\Media;
@@ -72,7 +73,6 @@ class HearMeQueueTest extends EntityKernelTestBase {
 
     $tts_service = $this->createMock(HearMeService::class);
     $tts_service->expects($this->never())->method('synthesize');
-    $tts_service->expects($this->never())->method('attachMediaToNode');
 
     $node_audio_queue = $this->createMock(HearMeNodeAudioQueue::class);
     $node_audio_queue->expects($this->once())
@@ -89,7 +89,9 @@ class HearMeQueueTest extends EntityKernelTestBase {
 
     $provider_resolver = $this->container->get('hear_me.provider_resolver');
     $this->assertInstanceOf(TtsProviderResolver::class, $provider_resolver);
-    $worker = new HearMeQueueWorker([], 'hear_me_tts', [], $tts_service, $node_audio_queue, $provider_resolver);
+    $node_audio_attacher = $this->container->get('hear_me.node_audio_attacher');
+    $this->assertInstanceOf(NodeAudioAttacher::class, $node_audio_attacher);
+    $worker = new HearMeQueueWorker([], 'hear_me_tts', [], $tts_service, $node_audio_attacher, $node_audio_queue, $provider_resolver);
     $worker->processItem([
       'nid' => 1,
       'text' => 'Old text',
@@ -110,7 +112,6 @@ class HearMeQueueTest extends EntityKernelTestBase {
       ->method('synthesize')
       ->with('Current text', 'en', 'test')
       ->willReturn(NULL);
-    $tts_service->expects($this->never())->method('attachMediaToNode');
 
     $node_audio_queue = $this->createMock(HearMeNodeAudioQueue::class);
     $node_audio_queue->expects($this->once())
@@ -127,7 +128,9 @@ class HearMeQueueTest extends EntityKernelTestBase {
 
     $provider_resolver = $this->container->get('hear_me.provider_resolver');
     $this->assertInstanceOf(TtsProviderResolver::class, $provider_resolver);
-    $worker = new HearMeQueueWorker([], 'hear_me_tts', [], $tts_service, $node_audio_queue, $provider_resolver);
+    $node_audio_attacher = $this->container->get('hear_me.node_audio_attacher');
+    $this->assertInstanceOf(NodeAudioAttacher::class, $node_audio_attacher);
+    $worker = new HearMeQueueWorker([], 'hear_me_tts', [], $tts_service, $node_audio_attacher, $node_audio_queue, $provider_resolver);
     $worker->processItem([
       'nid' => 1,
       'text' => 'Current text',
@@ -144,7 +147,6 @@ class HearMeQueueTest extends EntityKernelTestBase {
 
     $tts_service = $this->createMock(HearMeService::class);
     $tts_service->expects($this->never())->method('synthesize');
-    $tts_service->expects($this->never())->method('attachMediaToNode');
 
     $legacy_hash = str_repeat('c', 64);
     $current_hash = str_repeat('d', 64);
@@ -168,7 +170,9 @@ class HearMeQueueTest extends EntityKernelTestBase {
     $this->config('hear_me.provider.piper')->set('default_lang', 'uk')->save();
     $provider_resolver = $this->container->get('hear_me.provider_resolver');
     $this->assertInstanceOf(TtsProviderResolver::class, $provider_resolver);
-    $worker = new HearMeQueueWorker([], 'hear_me_tts', [], $tts_service, $node_audio_queue, $provider_resolver);
+    $node_audio_attacher = $this->container->get('hear_me.node_audio_attacher');
+    $this->assertInstanceOf(NodeAudioAttacher::class, $node_audio_attacher);
+    $worker = new HearMeQueueWorker([], 'hear_me_tts', [], $tts_service, $node_audio_attacher, $node_audio_queue, $provider_resolver);
     $worker->processItem([
       'nid' => 1,
       'text' => 'Legacy queue text',
@@ -509,7 +513,7 @@ class HearMeQueueTest extends EntityKernelTestBase {
     ]);
     $node->save();
 
-    $this->container->get('hear_me.service')->attachMediaToNode((int) $node->id(), $generated_media);
+    $this->container->get('hear_me.node_audio_attacher')->attach((int) $node->id(), $generated_media);
 
     $storage = $this->container->get('entity_type.manager')->getStorage('node');
     $storage->resetCache([$node->id()]);
@@ -535,7 +539,7 @@ class HearMeQueueTest extends EntityKernelTestBase {
       'name' => 'Unsaved audio',
     ]);
 
-    $this->container->get('hear_me.service')->attachMediaToNode((int) $node->id(), $media);
+    $this->container->get('hear_me.node_audio_attacher')->attach((int) $node->id(), $media);
 
     $this->assertTrue($this->reloadNode($node)->get('field_tts_audio')->isEmpty());
     $this->assertSame($revision_ids, $this->getNodeRevisionIds((int) $node->id()));
@@ -553,10 +557,10 @@ class HearMeQueueTest extends EntityKernelTestBase {
     $node->save();
     $revision_ids = $this->getNodeRevisionIds((int) $node->id());
     $media = $this->createAudioMedia('public://tts/missing-target.wav', 'Missing target audio');
-    $service = $this->container->get('hear_me.service');
+    $attacher = $this->container->get('hear_me.node_audio_attacher');
 
-    $service->attachMediaToNode(999999, $media);
-    $service->attachMediaToNode((int) $node->id(), $media);
+    $attacher->attach(999999, $media);
+    $attacher->attach((int) $node->id(), $media);
 
     $this->assertSame('Node without configured field', $this->reloadNode($node)->label());
     $this->assertSame($revision_ids, $this->getNodeRevisionIds((int) $node->id()));
@@ -587,7 +591,7 @@ class HearMeQueueTest extends EntityKernelTestBase {
     $revision_ids = $this->getNodeRevisionIds((int) $node->id());
     $media = $this->createAudioMedia('public://tts/wrong-target.wav', 'Wrong target audio');
 
-    $this->container->get('hear_me.service')->attachMediaToNode((int) $node->id(), $media);
+    $this->container->get('hear_me.node_audio_attacher')->attach((int) $node->id(), $media);
 
     $this->assertTrue($this->reloadNode($node)->get('field_tts_audio')->isEmpty());
     $this->assertSame($revision_ids, $this->getNodeRevisionIds((int) $node->id()));
@@ -608,7 +612,7 @@ class HearMeQueueTest extends EntityKernelTestBase {
     $node->save();
     $revision_ids = $this->getNodeRevisionIds((int) $node->id());
 
-    $this->container->get('hear_me.service')->attachMediaToNode((int) $node->id(), $media);
+    $this->container->get('hear_me.node_audio_attacher')->attach((int) $node->id(), $media);
 
     $reloaded = $this->reloadNode($node);
     $this->assertSame((int) $media->id(), (int) $reloaded->get('field_tts_audio')->target_id);
@@ -637,12 +641,12 @@ class HearMeQueueTest extends EntityKernelTestBase {
     ]);
     $enabled_node->save();
     $settings = $this->config('hear_me.settings');
-    $service = $this->container->get('hear_me.service');
+    $attacher = $this->container->get('hear_me.node_audio_attacher');
 
     $settings->set('replace_existing_generated_audio', FALSE)->save();
-    $service->attachMediaToNode((int) $disabled_node->id(), $replacement);
+    $attacher->attach((int) $disabled_node->id(), $replacement);
     $settings->set('replace_existing_generated_audio', TRUE)->save();
-    $service->attachMediaToNode((int) $enabled_node->id(), $replacement);
+    $attacher->attach((int) $enabled_node->id(), $replacement);
 
     $this->assertSame((int) $existing->id(), (int) $this->reloadNode($disabled_node)->get('field_tts_audio')->target_id);
     $this->assertSame($disabled_revision_ids, $this->getNodeRevisionIds((int) $disabled_node->id()));
@@ -667,7 +671,7 @@ class HearMeQueueTest extends EntityKernelTestBase {
     ]);
     $node->save();
 
-    $this->container->get('hear_me.service')->attachMediaToNode((int) $node->id(), $generated_media);
+    $this->container->get('hear_me.node_audio_attacher')->attach((int) $node->id(), $generated_media);
 
     $this->assertSame((int) $generated_media->id(), (int) $this->reloadNode($node)->get('field_tts_audio')->target_id);
   }
@@ -688,7 +692,7 @@ class HearMeQueueTest extends EntityKernelTestBase {
     $revision_ids = $this->getNodeRevisionIds((int) $node->id());
     $media = $this->createAudioMedia('public://tts/invalid-reference.wav', 'Invalid reference audio');
 
-    $this->container->get('hear_me.service')->attachMediaToNode((int) $node->id(), $media);
+    $this->container->get('hear_me.node_audio_attacher')->attach((int) $node->id(), $media);
 
     $this->assertTrue($this->reloadNode($node)->get('field_tts_audio')->isEmpty());
     $this->assertSame($revision_ids, $this->getNodeRevisionIds((int) $node->id()));
@@ -722,9 +726,9 @@ class HearMeQueueTest extends EntityKernelTestBase {
     ]);
     $missing_node->save();
 
-    $service = $this->container->get('hear_me.service');
-    $service->attachMediaToNode((int) $mixed_node->id(), $replacement);
-    $service->attachMediaToNode((int) $missing_node->id(), $replacement);
+    $attacher = $this->container->get('hear_me.node_audio_attacher');
+    $attacher->attach((int) $mixed_node->id(), $replacement);
+    $attacher->attach((int) $missing_node->id(), $replacement);
 
     $this->assertSame(
       [(int) $generated->id(), (int) $manual->id()],
@@ -800,7 +804,7 @@ class HearMeQueueTest extends EntityKernelTestBase {
     $revisionIdsBefore = $this->getNodeRevisionIds((int) $node->id());
 
     $media = $this->createAudioMedia('public://tts/revision-safe.wav', 'Revision-safe audio');
-    $this->container->get('hear_me.service')->attachMediaToNode((int) $node->id(), $media);
+    $this->container->get('hear_me.node_audio_attacher')->attach((int) $node->id(), $media);
 
     $storage->resetCache([$node->id()]);
     $reloaded = $storage->load($node->id());
@@ -836,9 +840,9 @@ class HearMeQueueTest extends EntityKernelTestBase {
 
     $draftMedia = $this->createAudioMedia('public://tts/moderated-draft.wav', 'Draft audio');
     $publishedMedia = $this->createAudioMedia('public://tts/moderated-published.wav', 'Published audio');
-    $service = $this->container->get('hear_me.service');
-    $service->attachMediaToNode((int) $draft->id(), $draftMedia);
-    $service->attachMediaToNode((int) $published->id(), $publishedMedia);
+    $attacher = $this->container->get('hear_me.node_audio_attacher');
+    $attacher->attach((int) $draft->id(), $draftMedia);
+    $attacher->attach((int) $published->id(), $publishedMedia);
 
     $storage = $this->container->get('entity_type.manager')->getStorage('node');
     $storage->resetCache([$draft->id(), $published->id()]);

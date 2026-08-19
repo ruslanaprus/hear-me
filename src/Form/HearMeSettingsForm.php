@@ -5,8 +5,6 @@ namespace Drupal\hear_me\Form;
 use Drupal\Component\Plugin\ConfigurableInterface;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Config\TypedConfigManagerInterface;
-use Drupal\Core\Entity\Entity\EntityFormDisplay;
-use Drupal\Core\Entity\Entity\EntityViewDisplay;
 use Drupal\Core\Entity\EntityFieldManagerInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Form\ConfigFormBase;
@@ -20,6 +18,7 @@ use Drupal\field\FieldConfigInterface;
 use Drupal\hear_me\Exception\ActiveProviderChangedException;
 use Drupal\hear_me\Plugin\TtsProvider\TtsProviderInterface;
 use Drupal\hear_me\Plugin\TtsProvider\TtsProviderManager;
+use Drupal\hear_me\Service\AudioFieldProvisioner;
 use Drupal\hear_me\Service\HearMeAudioFieldValidator;
 use Drupal\hear_me\Service\HearMeExistingContentQueue;
 use Drupal\hear_me\Service\HearMeInputValidator;
@@ -52,6 +51,8 @@ class HearMeSettingsForm extends ConfigFormBase {
 
   protected HearMeAudioFieldValidator $audioFieldValidator;
 
+  protected AudioFieldProvisioner $audioFieldProvisioner;
+
   public function __construct(
     ConfigFactoryInterface $configFactory,
     TypedConfigManagerInterface $typedConfigManager,
@@ -63,6 +64,7 @@ class HearMeSettingsForm extends ConfigFormBase {
     HearMeSetupStatus $setupStatus,
     HearMeExistingContentQueue $existingContentQueue,
     HearMeAudioFieldValidator $audioFieldValidator,
+    AudioFieldProvisioner $audioFieldProvisioner,
   ) {
     parent::__construct($configFactory, $typedConfigManager);
     $this->providerResolver  = $providerResolver;
@@ -73,6 +75,7 @@ class HearMeSettingsForm extends ConfigFormBase {
     $this->setupStatus       = $setupStatus;
     $this->existingContentQueue = $existingContentQueue;
     $this->audioFieldValidator = $audioFieldValidator;
+    $this->audioFieldProvisioner = $audioFieldProvisioner;
   }
 
   public static function create(ContainerInterface $container): static {
@@ -87,6 +90,7 @@ class HearMeSettingsForm extends ConfigFormBase {
       $container->get('hear_me.setup_status'),
       $container->get('hear_me.existing_content_queue'),
       $container->get('hear_me.audio_field_validator'),
+      $container->get('hear_me.audio_field_provisioner'),
     );
   }
 
@@ -802,56 +806,9 @@ class HearMeSettingsForm extends ConfigFormBase {
       ->set('tts_audio_field', $fieldName)
       ->save();
 
-    $created = 0;
-    $skipped = 0;
-    $storage = FieldStorageConfig::loadByName('node', $fieldName);
-    if (!$storage) {
-      $storage = FieldStorageConfig::create([
-        'field_name' => $fieldName,
-        'entity_type' => 'node',
-        'type' => 'entity_reference',
-        'settings' => [
-          'target_type' => 'media',
-        ],
-        'cardinality' => 1,
-        'translatable' => TRUE,
-      ]);
-      $storage->save();
-    }
-
-    foreach ($bundles as $bundle) {
-      if (!$this->entityTypeManager->getStorage('node_type')->load($bundle)) {
-        $skipped++;
-        continue;
-      }
-
-      if (FieldConfig::loadByName('node', $bundle, $fieldName)) {
-        $skipped++;
-        continue;
-      }
-
-      FieldConfig::create([
-        'field_name' => $fieldName,
-        'entity_type' => 'node',
-        'bundle' => $bundle,
-        'label' => 'HearMe audio',
-        'description' => 'Generated text-to-speech audio media attached by HearMe.',
-        'required' => FALSE,
-        'translatable' => TRUE,
-        'settings' => [
-          'handler' => 'default:media',
-          'handler_settings' => [
-            'target_bundles' => [
-              'hear_me_audio' => 'hear_me_audio',
-            ],
-            'auto_create' => FALSE,
-          ],
-        ],
-      ])->save();
-
-      $this->configureAudioFieldDisplays($bundle, $fieldName);
-      $created++;
-    }
+    $result = $this->audioFieldProvisioner->provision($fieldName, $bundles);
+    $created = count($result->createdBundles);
+    $skipped = count($result->skippedBundles);
 
     if ($created > 0) {
       $this->messenger()->addStatus($this->formatPlural(
@@ -1280,34 +1237,6 @@ class HearMeSettingsForm extends ConfigFormBase {
     sort($second);
 
     return $first === $second;
-  }
-
-  protected function configureAudioFieldDisplays(string $bundle, string $fieldName): void {
-    $formDisplay = EntityFormDisplay::load('node.' . $bundle . '.default')
-      ?: EntityFormDisplay::create([
-        'targetEntityType' => 'node',
-        'bundle' => $bundle,
-        'mode' => 'default',
-        'status' => TRUE,
-      ]);
-    $formDisplay->removeComponent($fieldName)->save();
-
-    $viewDisplay = EntityViewDisplay::load('node.' . $bundle . '.default')
-      ?: EntityViewDisplay::create([
-        'targetEntityType' => 'node',
-        'bundle' => $bundle,
-        'mode' => 'default',
-        'status' => TRUE,
-      ]);
-    $viewDisplay->setComponent($fieldName, [
-      'type' => 'entity_reference_entity_view',
-      'label' => 'above',
-      'settings' => [
-        'view_mode' => 'default',
-        'link' => FALSE,
-      ],
-      'weight' => 90,
-    ])->save();
   }
 
   protected function buildWarning($message): array {

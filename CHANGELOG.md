@@ -35,6 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Queue workers delegate node Media attachment and replacement-policy decisions to a focused internal service instead of the synthesis orchestrator.
 - Persistent generated-audio File/Media lookup and creation are handled by a focused internal factory that returns `MediaInterface`.
 - New generated Media records an installed synthesis language as its entity language and safely falls back to language-neutral metadata for unknown provider language identifiers.
+- Simplified how HearMe sets up audio fields internally without changing the administrator workflow or existing fields.
 
 ### Security
 

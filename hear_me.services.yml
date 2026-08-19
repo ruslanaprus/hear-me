@@ -63,6 +63,12 @@ services:
     arguments:
       - '@entity_type.manager'
 
+  # Provisions generated audio fields and their default displays.
+  hear_me.audio_field_provisioner:
+    class: Drupal\hear_me\Service\AudioFieldProvisioner
+    arguments:
+      - '@entity_type.manager'
+
   # Existing node backfill queue manager
   hear_me.existing_content_queue:
     class: Drupal\hear_me\Service\HearMeExistingContentQueue

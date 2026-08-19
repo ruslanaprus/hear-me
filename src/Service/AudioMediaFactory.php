@@ -4,6 +4,8 @@ namespace Drupal\hear_me\Service;
 
 use Drupal\Core\Entity\EntityStorageInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\Core\Language\LanguageInterface;
+use Drupal\Core\Language\LanguageManagerInterface;
 use Drupal\file\FileInterface;
 use Drupal\media\MediaInterface;
 
@@ -18,7 +20,10 @@ final class AudioMediaFactory {
 
   private EntityStorageInterface $mediaStorage;
 
-  public function __construct(EntityTypeManagerInterface $entityTypeManager) {
+  public function __construct(
+    EntityTypeManagerInterface $entityTypeManager,
+    private readonly LanguageManagerInterface $languageManager,
+  ) {
     $this->fileStorage = $entityTypeManager->getStorage('file');
     $this->mediaStorage = $entityTypeManager->getStorage('media');
   }
@@ -61,6 +66,7 @@ final class AudioMediaFactory {
 
     $media = $this->mediaStorage->create([
       'bundle' => 'hear_me_audio',
+      'langcode' => $this->resolveMediaLangcode($lang),
       'name' => 'TTS-' . $lang . '-' . md5($text),
       'field_hear_me_audio_file' => [
         'target_id' => $file->id(),
@@ -72,6 +78,15 @@ final class AudioMediaFactory {
     $media->save();
 
     return $media;
+  }
+
+  /**
+   * Resolves synthesis language to safe Drupal entity language metadata.
+   */
+  private function resolveMediaLangcode(string $lang): string {
+    $langcode = strtolower(str_replace('_', '-', trim($lang)));
+    $language = $this->languageManager->getLanguage($langcode);
+    return $language?->getId() ?? LanguageInterface::LANGCODE_NOT_SPECIFIED;
   }
 
 }

@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace Drupal\Tests\hear_me\Kernel;
 
 use Drupal\Core\Entity\EntityStorageException;
+use Drupal\Core\Language\LanguageInterface;
 use Drupal\field\Entity\FieldConfig;
 use Drupal\file\Entity\File;
 use Drupal\hear_me\Service\AudioMediaFactory;
+use Drupal\language\Entity\ConfigurableLanguage;
 use Drupal\media\Entity\Media;
 use Drupal\media\Entity\MediaType;
 use Drupal\media\MediaInterface;
@@ -31,6 +33,7 @@ class AudioMediaFactoryTest extends KernelTestBase {
     'field',
     'file',
     'image',
+    'language',
     'media',
     'hear_me',
     'hear_me_test',
@@ -54,11 +57,13 @@ class AudioMediaFactoryTest extends KernelTestBase {
   public function testCreatesFileAndNamedMedia(): void {
     $uri = 'public://tts/new-audio.wav';
     $text = 'Factory naming text';
+    ConfigurableLanguage::createFromLangcode('uk')->save();
 
     $media = $this->createMediaFromUri($uri, 'uk', $text);
 
     $this->assertInstanceOf(MediaInterface::class, $media);
     $this->assertSame('hear_me_audio', $media->bundle());
+    $this->assertSame('uk', $media->language()->getId());
     $this->assertSame('TTS-uk-' . md5($text), $media->label());
     $file = $media->get('field_hear_me_audio_file')->entity;
     $this->assertInstanceOf(File::class, $file);
@@ -66,6 +71,36 @@ class AudioMediaFactoryTest extends KernelTestBase {
     $this->assertTrue($file->isPermanent());
     $this->assertSame(1, $this->countEntities('file', ['uri' => $uri]));
     $this->assertSame(1, $this->countEntities('media'));
+  }
+
+  /**
+   * Tests unknown synthesis languages use language-neutral Media metadata.
+   */
+  public function testUnknownSynthesisLanguageUsesUnd(): void {
+    $media = $this->createMediaFromUri(
+      'public://tts/provider-language.wav',
+      'provider-voice',
+      'Provider language',
+    );
+
+    $this->assertSame(LanguageInterface::LANGCODE_NOT_SPECIFIED, $media->language()->getId());
+    $this->assertSame('TTS-provider-voice-' . md5('Provider language'), $media->label());
+  }
+
+  /**
+   * Tests provider language syntax is normalized for Drupal metadata.
+   */
+  public function testNormalizesInstalledSynthesisLanguage(): void {
+    ConfigurableLanguage::createFromLangcode('en-us')->save();
+
+    $media = $this->createMediaFromUri(
+      'public://tts/regional-language.wav',
+      'EN_US',
+      'Regional language',
+    );
+
+    $this->assertSame('en-us', $media->language()->getId());
+    $this->assertSame('TTS-EN_US-' . md5('Regional language'), $media->label());
   }
 
   /**
@@ -101,6 +136,7 @@ class AudioMediaFactoryTest extends KernelTestBase {
 
     $this->assertSame((int) $existing->id(), (int) $media->id());
     $this->assertSame('Existing media name', $media->label());
+    $this->assertSame('en', $media->language()->getId());
     $this->assertSame(1, $this->countEntities('file', ['uri' => $uri]));
     $this->assertSame(1, $this->countEntities('media'));
   }

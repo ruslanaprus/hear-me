@@ -8,6 +8,7 @@ use Drupal\field\Entity\FieldConfig;
 use Drupal\field\Entity\FieldStorageConfig;
 use Drupal\file\Entity\File;
 use Drupal\hear_me\Plugin\QueueWorker\HearMeQueueWorker;
+use Drupal\hear_me\Service\HearMeExistingContentQueue;
 use Drupal\hear_me\Service\HearMeNodeAudioQueue;
 use Drupal\hear_me\Service\HearMeService;
 use Drupal\hear_me\Service\TtsProviderResolver;
@@ -207,6 +208,134 @@ class HearMeQueueTest extends EntityKernelTestBase {
     $this->assertSame('en', $item->data['lang']);
     $this->assertNotEmpty($item->data['content_hash']);
     $queue->deleteItem($item);
+  }
+
+  /**
+   * Tests every node in one backfill chunk uses its captured provider ID.
+   */
+  public function testBackfillChunkUsesCapturedProviderForEveryNode(): void {
+    $this->createContentType('article', 'Article');
+    $this->createAudioReferenceField('article');
+
+    Node::create([
+      'type' => 'article',
+      'title' => 'First node',
+      'status' => 1,
+      'langcode' => 'und',
+    ])->save();
+    Node::create([
+      'type' => 'article',
+      'title' => 'Second node',
+      'status' => 1,
+      'langcode' => 'und',
+    ])->save();
+
+    $this->config('hear_me.settings')
+      ->set('provider', 'piper')
+      ->set('queue_bundles', ['article'])
+      ->set('tts_audio_field', 'field_tts_audio')
+      ->save();
+
+    $backfill = new class(
+      $this->container->get('config.factory'),
+      $this->container->get('entity_type.manager'),
+      $this->container->get('hear_me.node_audio_queue'),
+      $this->container->get('hear_me.provider_resolver'),
+      $this->container->get('hear_me.audio_field_validator'),
+    ) extends HearMeExistingContentQueue {
+
+      /**
+       * Provider IDs received while queueing nodes.
+       *
+       * @var string[]
+       */
+      public array $providerIds = [];
+
+      protected function queueNode(\Drupal\node\NodeInterface $node, bool $missingOnly, string $providerId): array {
+        $this->providerIds[] = $providerId;
+        $stats = parent::queueNode($node, $missingOnly, $providerId);
+        if (count($this->providerIds) === 1) {
+          $this->configFactory->getEditable('hear_me.settings')
+            ->set('provider', 'test')
+            ->save();
+        }
+        return $stats;
+      }
+
+    };
+
+    $result = $backfill->queueNextBatch(['article'], TRUE, TRUE, 0, 2);
+
+    $this->assertSame(2, $result['stats']['queued']);
+    $this->assertSame(['piper', 'piper'], $backfill->providerIds);
+  }
+
+  /**
+   * Tests synchronous backfill retains one effective provider across chunks.
+   */
+  public function testQueueAllKeepsCapturedEffectiveProviderBetweenChunks(): void {
+    $this->createContentType('article', 'Article');
+    $this->createAudioReferenceField('article');
+
+    Node::create(['type' => 'article', 'title' => 'First node', 'status' => 1])->save();
+    Node::create(['type' => 'article', 'title' => 'Second node', 'status' => 1])->save();
+    $this->config('hear_me.settings')
+      ->set('provider', 'piper')
+      ->set('queue_bundles', ['article'])
+      ->set('tts_audio_field', 'field_tts_audio')
+      ->save();
+    $this->container->get('config.factory')
+      ->get('hear_me.settings')
+      ->setSettingsOverride(['provider' => 'piper']);
+
+    $backfill = new class(
+      $this->container->get('config.factory'),
+      $this->container->get('entity_type.manager'),
+      $this->container->get('hear_me.node_audio_queue'),
+      $this->container->get('hear_me.provider_resolver'),
+      $this->container->get('hear_me.audio_field_validator'),
+    ) extends HearMeExistingContentQueue {
+
+      /**
+       * Number of processed chunks.
+       */
+      private int $chunks = 0;
+
+      /**
+       * Provider IDs received while queueing chunks.
+       *
+       * @var string[]
+       */
+      public array $providerIds = [];
+
+      public function queueNextBatch(
+        array $bundles = [],
+        bool $publishedOnly = TRUE,
+        bool $missingOnly = TRUE,
+        int $lastNid = 0,
+        int $batchSize = self::DEFAULT_BATCH_SIZE,
+        ?string $providerId = NULL,
+      ): array {
+        $this->providerIds[] = $providerId;
+        $result = parent::queueNextBatch($bundles, $publishedOnly, $missingOnly, $lastNid, $batchSize, $providerId);
+        $this->chunks++;
+        if ($this->chunks === 1) {
+          $storage = \Drupal::service('config.storage');
+          $settings = $storage->read('hear_me.settings');
+          $settings['provider'] = 'test';
+          $storage->write('hear_me.settings', $settings);
+        }
+        return $result;
+      }
+
+    };
+
+    $stats = $backfill->queueAll(['article'], TRUE, TRUE, 0, 1);
+
+    $this->assertSame(2, $stats['queued']);
+    $this->assertSame(['piper', 'piper', 'piper'], $backfill->providerIds);
+    $this->assertSame('test', \Drupal::service('config.storage')->read('hear_me.settings')['provider']);
+    $this->assertSame('piper', $this->container->get('hear_me.provider_resolver')->getActiveProviderId());
   }
 
   /**

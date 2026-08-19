@@ -284,6 +284,7 @@ class HearMeSettingsFormTest extends BrowserTestBase {
         'published_only' => TRUE,
         'missing_only' => TRUE,
         'batch_size' => HearMeExistingContentQueue::DEFAULT_BATCH_SIZE,
+        'provider_id' => 'piper',
       ], $batchSet['operations'][0][1][0]);
       $this->assertSame([HearMeSettingsForm::class, 'queueExistingContentBatchFinished'], $batchSet['finished']);
     }
@@ -291,6 +292,51 @@ class HearMeSettingsFormTest extends BrowserTestBase {
       $batch =& batch_get();
       $batch = [];
     }
+  }
+
+  /**
+   * Tests a Batch backfill stops after the active provider changes.
+   */
+  public function testExistingContentBackfillBatchStopsAfterProviderChange(): void {
+    $this->drupalCreateContentType(['type' => 'article', 'name' => 'Article']);
+    $this->createAudioReferenceField('article', 'field_tts_audio');
+    Node::create(['type' => 'article', 'title' => 'First node', 'status' => 1])->save();
+    Node::create(['type' => 'article', 'title' => 'Second node', 'status' => 1])->save();
+    $this->config('hear_me.settings')
+      ->set('provider', 'piper')
+      ->set('queue_bundles', ['article'])
+      ->set('tts_audio_field', 'field_tts_audio')
+      ->save();
+
+    $context = [];
+    $options = [
+      'bundles' => ['article'],
+      'published_only' => TRUE,
+      'missing_only' => TRUE,
+      'batch_size' => 1,
+      'provider_id' => 'piper',
+    ];
+
+    HearMeSettingsForm::queueExistingContentBatchOperation($options, $context);
+    $this->assertSame(1, $context['results']['queued']);
+    $this->assertLessThan(1, $context['finished']);
+    $this->assertSame(1, $this->container->get('queue')->get('hear_me_tts')->numberOfItems());
+
+    $this->config('hear_me.settings')->set('provider', 'test')->save();
+
+    HearMeSettingsForm::queueExistingContentBatchOperation($options, $context);
+
+    $this->assertSame(1, $context['finished']);
+    $this->assertTrue($context['results']['provider_changed']);
+    $this->assertSame(1, $context['results']['queued']);
+    $this->assertSame(1, $this->container->get('queue')->get('hear_me_tts')->numberOfItems());
+
+    HearMeSettingsForm::queueExistingContentBatchFinished(TRUE, $context['results'], []);
+    $messages = $this->container->get('messenger')->messagesByType('error');
+    $this->assertSame(
+      'The active TTS provider changed while existing content was being queued. Restart the backfill with the current provider.',
+      (string) end($messages),
+    );
   }
 
   /**

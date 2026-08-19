@@ -17,6 +17,7 @@ use Drupal\Core\Session\AccountInterface;
 use Drupal\field\Entity\FieldConfig;
 use Drupal\field\Entity\FieldStorageConfig;
 use Drupal\field\FieldConfigInterface;
+use Drupal\hear_me\Exception\ActiveProviderChangedException;
 use Drupal\hear_me\Plugin\TtsProvider\TtsProviderInterface;
 use Drupal\hear_me\Plugin\TtsProvider\TtsProviderManager;
 use Drupal\hear_me\Service\HearMeAudioFieldValidator;
@@ -884,6 +885,7 @@ class HearMeSettingsForm extends ConfigFormBase {
     $queueSourceFields = $confirmation['source_fields'] ?? [];
     $publishedOnly = (bool) ($confirmation['published_only'] ?? TRUE);
     $missingOnly = (bool) ($confirmation['missing_only'] ?? TRUE);
+    $providerId = $this->providerResolver->getActiveProviderId();
 
     $this->configFactory->getEditable('hear_me.settings')
       ->set('tts_audio_field', $fieldName)
@@ -901,6 +903,7 @@ class HearMeSettingsForm extends ConfigFormBase {
             'published_only' => $publishedOnly,
             'missing_only' => $missingOnly,
             'batch_size' => HearMeExistingContentQueue::DEFAULT_BATCH_SIZE,
+            'provider_id' => $providerId,
           ]],
         ],
       ],
@@ -918,6 +921,7 @@ class HearMeSettingsForm extends ConfigFormBase {
     $publishedOnly = (bool) ($options['published_only'] ?? TRUE);
     $missingOnly = (bool) ($options['missing_only'] ?? TRUE);
     $batchSize = (int) ($options['batch_size'] ?? HearMeExistingContentQueue::DEFAULT_BATCH_SIZE);
+    $providerId = (string) ($options['provider_id'] ?? '');
 
     if (empty($context['sandbox']['initialized'])) {
       $context['sandbox']['initialized'] = TRUE;
@@ -927,13 +931,22 @@ class HearMeSettingsForm extends ConfigFormBase {
       $context['results'] = $queueService->emptyStats();
     }
 
-    $result = $queueService->queueNextBatch(
-      $bundles,
-      $publishedOnly,
-      $missingOnly,
-      (int) $context['sandbox']['last_nid'],
-      $batchSize,
-    );
+    try {
+      $result = $queueService->queueNextBatch(
+        $bundles,
+        $publishedOnly,
+        $missingOnly,
+        (int) $context['sandbox']['last_nid'],
+        $batchSize,
+        $providerId,
+      );
+    }
+    catch (ActiveProviderChangedException) {
+      $context['results']['provider_changed'] = TRUE;
+      $context['message'] = \Drupal::translation()->translate('The active TTS provider changed. Restart the existing content backfill.');
+      $context['finished'] = 1;
+      return;
+    }
 
     $context['sandbox']['last_nid'] = (int) $result['last_nid'];
     $context['sandbox']['scanned'] += (int) ($result['stats']['scanned'] ?? 0);
@@ -957,6 +970,11 @@ class HearMeSettingsForm extends ConfigFormBase {
   public static function queueExistingContentBatchFinished(bool $success, array $results, array $operations): void {
     if (!$success) {
       \Drupal::messenger()->addError(\Drupal::translation()->translate('Queueing existing content did not complete. Check recent log messages for details.'));
+      return;
+    }
+
+    if (!empty($results['provider_changed'])) {
+      \Drupal::messenger()->addError(\Drupal::translation()->translate('The active TTS provider changed while existing content was being queued. Restart the backfill with the current provider.'));
       return;
     }
 

@@ -4,6 +4,7 @@ namespace Drupal\hear_me\Service;
 
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\hear_me\Exception\ActiveProviderChangedException;
 use Drupal\node\NodeInterface;
 
 /**
@@ -139,6 +140,8 @@ class HearMeExistingContentQueue {
    *
    * @param string[] $bundles
    *   Optional configured bundle filter.
+   * @param string|null $providerId
+   *   Expected active provider ID, or NULL to capture the current provider.
    *
    * @return array{
    *   stats: array<string, int>,
@@ -153,7 +156,18 @@ class HearMeExistingContentQueue {
     bool $missingOnly = TRUE,
     int $lastNid = 0,
     int $batchSize = self::DEFAULT_BATCH_SIZE,
+    ?string $providerId = NULL,
   ): array {
+    $activeProviderId = $this->providerResolver->getActiveProviderId();
+    if ($providerId !== NULL && $providerId !== $activeProviderId) {
+      throw new ActiveProviderChangedException(sprintf(
+        'The active TTS provider changed from "%s" to "%s" during existing-content backfill. Restart the backfill.',
+        $providerId,
+        $activeProviderId,
+      ));
+    }
+    $providerId ??= $activeProviderId;
+
     $stats = $this->emptyStats();
     $bundles = $this->getBundlesWithAudioField($this->filterConfiguredBundles($bundles));
     if (!$bundles) {
@@ -190,7 +204,6 @@ class HearMeExistingContentQueue {
     }
 
     $nodes = $this->entityTypeManager->getStorage('node')->loadMultiple($nids);
-    $providerId = $this->providerResolver->getActiveProviderId();
     foreach ($nids as $nid) {
       $lastNid = max($lastNid, $nid);
       $node = $nodes[$nid] ?? NULL;
@@ -212,6 +225,8 @@ class HearMeExistingContentQueue {
   /**
    * Queues matching existing nodes in one process, for Drush and scripts.
    *
+   * The active provider is captured once and checked before every chunk.
+   *
    * @param string[] $bundles
    *   Optional configured bundle filter.
    * @param int $limit
@@ -229,6 +244,7 @@ class HearMeExistingContentQueue {
   ): array {
     $stats = $this->emptyStats();
     $lastNid = 0;
+    $providerId = $this->providerResolver->getActiveProviderId();
 
     do {
       $remaining = $limit > 0 ? $limit - $stats['scanned'] : $batchSize;
@@ -242,6 +258,7 @@ class HearMeExistingContentQueue {
         $missingOnly,
         $lastNid,
         min($batchSize, $remaining),
+        $providerId,
       );
       $stats = $this->mergeStats($stats, $result['stats']);
       $lastNid = (int) $result['last_nid'];

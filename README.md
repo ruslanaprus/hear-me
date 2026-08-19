@@ -126,6 +126,8 @@ See [Global settings](docs/installation.md#global-settings) for the full setting
 
 After installing HearMe on a site that already has content, use **Queue existing content** on the settings page to add background audio-generation jobs for configured content types. If Drush is installed, the same backfill is available with `drush hear-me:queue-existing`.
 
+HearMe captures the active provider when a backfill starts and uses that identity while constructing and validating jobs. If the active provider changes between Batch API chunks, the backfill stops before queueing the next chunk and asks the administrator to restart it. Queue payloads do not retain a provider ID: jobs queued by completed chunks remain in the queue and use the existing active-provider and stale-item behavior when workers process them.
+
 Before backfilling, review **Queue source fields**. Each queued content type can include the node title and any supported stored text fields. Supported field types are plain text, long text, formatted text, and text with summary; text-with-summary fields expose text and summary separately. Paragraphs, entity references, Layout Builder fields, and other complex fields are not offered in this release. Existing installs keep the legacy title plus Body behavior until the settings are saved.
 
 The selected source configuration is part of each queue item's content hash. Changing source fields causes newly queued jobs to use a new hash, and stale pending jobs are skipped before they can overwrite newer audio.

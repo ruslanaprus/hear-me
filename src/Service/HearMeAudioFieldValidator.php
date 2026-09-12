@@ -10,6 +10,8 @@ use Drupal\field\Entity\FieldStorageConfig;
 
 /**
  * Validates node audio fields used by queue-generated HearMe media.
+ *
+ * @internal
  */
 class HearMeAudioFieldValidator {
 

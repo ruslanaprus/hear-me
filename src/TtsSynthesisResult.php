@@ -10,7 +10,7 @@ namespace Drupal\hear_me;
  * persistence, while its audio Media factory creates persistent entities for
  * pre-generated audio.
  *
- * Both properties are immutable after construction; the object should be
+ * All properties are immutable after construction; the object should be
  * treated as read-only by all consumers.
  */
 final class TtsSynthesisResult {

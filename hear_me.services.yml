@@ -13,10 +13,6 @@ services:
       - '@plugin.manager.hear_me.tts_provider'
       - '@logger.factory'
 
-  # Shared file-path utility
-  hear_me.file_helper:
-    class: Drupal\hear_me\Service\TtsFileHelper
-
   # TTS endpoint request validator
   hear_me.input_validator:
     class: Drupal\hear_me\Service\HearMeInputValidator
@@ -100,7 +96,6 @@ services:
     arguments:
       - '@hear_me.provider_resolver'
       - '@hear_me.audio_media_factory'
-      - '@hear_me.file_helper'
       - '@hear_me.cache_manager'
       - '@lock'
       - '@logger.factory'

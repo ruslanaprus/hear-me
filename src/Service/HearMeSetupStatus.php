@@ -15,6 +15,8 @@ use Drupal\Core\StringTranslation\StringTranslationTrait;
 
 /**
  * Builds setup readiness checks for the HearMe settings form.
+ *
+ * @internal
  */
 class HearMeSetupStatus {
 
@@ -167,7 +169,7 @@ class HearMeSetupStatus {
       return $this->item('public_tts', $this->t('public://tts writable'), 'error', $this->t('Failed'), $this->t('The public stream wrapper is not available.'));
     }
 
-    $directory = TtsFileHelperInterface::TTS_URI_BASE;
+    $directory = TtsCacheManager::RUNTIME_PUBLIC_URI_BASE;
     $prepared = $this->fileSystem->prepareDirectory(
       $directory,
       FileSystemInterface::CREATE_DIRECTORY | FileSystemInterface::MODIFY_PERMISSIONS,

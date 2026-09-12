@@ -9,11 +9,13 @@ use Drupal\hear_me\TtsAudioResult;
 use Drupal\hear_me\TtsSynthesisResult;
 use Drupal\media\MediaInterface;
 
+/**
+ * Coordinates runtime and persistent TTS synthesis operations.
+ */
 class HearMeService {
 
   protected TtsProviderResolver $providerResolver;
   protected AudioMediaFactory $audioMediaFactory;
-  protected TtsFileHelperInterface $fileHelper;
   protected TtsCacheManager $cacheManager;
   protected LockBackendInterface $lock;
   protected \Psr\Log\LoggerInterface $logger;
@@ -22,7 +24,6 @@ class HearMeService {
   public function __construct(
     TtsProviderResolver $providerResolver,
     AudioMediaFactory $audioMediaFactory,
-    TtsFileHelperInterface $fileHelper,
     TtsCacheManager $cacheManager,
     LockBackendInterface $lock,
     LoggerChannelFactoryInterface $loggerFactory,
@@ -30,18 +31,10 @@ class HearMeService {
   ) {
     $this->providerResolver  = $providerResolver;
     $this->audioMediaFactory = $audioMediaFactory;
-    $this->fileHelper        = $fileHelper;
     $this->cacheManager      = $cacheManager;
     $this->lock              = $lock;
     $this->logger            = $loggerFactory->get('hear_me');
     $this->privateKey        = $privateKey;
-  }
-
-  /**
-   * Builds the canonical file URI for a TTS audio file.
-   */
-  public function buildTtsUri(string $text, string $lang, string $providerKey, string $extension): string {
-    return $this->fileHelper->buildTtsUri($text, $lang, $providerKey, $extension);
   }
 
   /**
@@ -68,17 +61,15 @@ class HearMeService {
   }
 
   /**
-   * Returns the raw audio bytes for the given text and language.
+   * Builds an opaque cache token for a trusted runtime source.
    */
-  public function getAudioBytes(string $text, string $lang, ?string $providerId = NULL): ?string {
-    $audio = $this->getAudio($text, $lang, 'adhoc', $providerId);
-    return $audio?->bytes;
-  }
-
   public function buildCacheToken(string $text, string $lang, string $source, ?string $providerId = NULL): string {
     return hash_hmac('sha256', $this->buildCacheTokenPayload($text, $lang, $source, $providerId), $this->privateKey->get());
   }
 
+  /**
+   * Returns a trusted runtime source, downgrading invalid inline tokens.
+   */
   public function getTrustedRuntimeSource(string $text, string $lang, string $source, ?string $cacheToken, ?string $providerId = NULL): string {
     $source = $this->cacheManager->normalizeSource($source);
     if ($source === 'inline' && !$this->validateCacheToken($text, $lang, $source, $cacheToken, $providerId)) {

@@ -4,6 +4,8 @@ namespace Drupal\hear_me;
 
 /**
  * Value object returned after validating a TTS endpoint request.
+ *
+ * @internal
  */
 final readonly class TtsInputValidationResult {
 

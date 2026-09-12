@@ -15,12 +15,14 @@ use Drupal\hear_me\TtsSynthesisResult;
 
 /**
  * Manages file-backed runtime cache entries for generated TTS audio.
+ *
+ * @internal
  */
-class TtsCacheManager {
+final class TtsCacheManager {
 
   public const RUNTIME_PRIVATE_URI_BASE = 'private://hear_me/tts/';
 
-  public const RUNTIME_PUBLIC_URI_BASE = TtsFileHelperInterface::TTS_URI_BASE;
+  public const RUNTIME_PUBLIC_URI_BASE = 'public://tts/';
 
   private ?bool $metadataAvailable = NULL;
 
@@ -121,7 +123,7 @@ class TtsCacheManager {
   public function buildUri(string $cid, string $extension, string $source = 'adhoc'): string {
     $source = $this->normalizeSource($source);
     $baseUri = $source === 'entity'
-      ? TtsFileHelperInterface::TTS_URI_BASE
+      ? self::RUNTIME_PUBLIC_URI_BASE
       : $this->getRuntimeCacheBaseUri();
 
     return $baseUri . $cid . '.' . $this->sanitizeExtension($extension);

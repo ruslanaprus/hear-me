@@ -14,6 +14,8 @@ use Drupal\Core\State\StateInterface;
 
 /**
  * Builds and validates queue items for node audio pre-generation.
+ *
+ * @internal
  */
 class HearMeNodeAudioQueue {
 

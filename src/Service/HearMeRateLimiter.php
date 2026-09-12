@@ -9,6 +9,8 @@ use Symfony\Component\HttpFoundation\RequestStack;
 
 /**
  * Applies Flood API throttles and quotas to TTS generation requests.
+ *
+ * @internal
  */
 class HearMeRateLimiter {
 

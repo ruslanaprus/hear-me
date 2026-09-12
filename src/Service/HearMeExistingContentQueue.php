@@ -9,6 +9,8 @@ use Drupal\node\NodeInterface;
 
 /**
  * Queues existing nodes for HearMe audio pre-generation.
+ *
+ * @internal
  */
 class HearMeExistingContentQueue {
 

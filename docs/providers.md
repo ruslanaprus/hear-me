@@ -10,6 +10,8 @@ HearMe discovers the available provider plugins and creates configured instances
 
 Provider selection and metadata are coordinated by an internal resolver. Provider modules should depend only on the documented plugin attribute, interface, configuration convention, and result object; the resolver and `HearMeService` are not provider extension APIs.
 
+The supported provider extension API is `#[TtsProvider]`, `TtsProviderInterface`, `TtsSynthesisResult`, the `hear_me.provider.<plugin_id>` configuration convention, and the standard Drupal plugin construction and configuration-form interfaces described below. HearMe's separate server-side synthesis application API is documented in [HearMe public API](api.md).
+
 For a synthesis operation, HearMe:
 
 1. Reads the active plugin ID from `hear_me.settings`.

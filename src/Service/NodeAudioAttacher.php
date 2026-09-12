@@ -163,7 +163,7 @@ final class NodeAudioAttacher {
     $fileStorage = $this->entityTypeManager->getStorage('file');
     foreach ($media->get('field_hear_me_audio_file')->getValue() as $fileValue) {
       $file = $fileStorage->load((int) ($fileValue['target_id'] ?? 0));
-      if (!$file || !str_starts_with((string) $file->getFileUri(), TtsFileHelperInterface::TTS_URI_BASE)) {
+      if (!$file || !str_starts_with((string) $file->getFileUri(), TtsCacheManager::RUNTIME_PUBLIC_URI_BASE)) {
         return FALSE;
       }
     }

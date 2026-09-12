@@ -7,6 +7,8 @@ use Drupal\hear_me\TtsInputValidationResult;
 
 /**
  * Validates and normalizes TTS endpoint input.
+ *
+ * @internal
  */
 class HearMeInputValidator {
 

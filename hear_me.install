@@ -4,7 +4,6 @@ use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\File\FileSystemInterface;
 use Drupal\file\FileUsage\FileUsageInterface;
 use Drupal\hear_me\Service\TtsCacheManager;
-use Drupal\hear_me\Service\TtsFileHelperInterface;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -287,7 +286,6 @@ function hear_me_update_11003(): void {
  */
 function _hear_me_audio_directory_uris(): array {
   return array_values(array_unique([
-    TtsFileHelperInterface::TTS_URI_BASE,
     TtsCacheManager::RUNTIME_PUBLIC_URI_BASE,
     TtsCacheManager::RUNTIME_PRIVATE_URI_BASE,
   ]));

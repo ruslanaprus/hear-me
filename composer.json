@@ -21,6 +21,7 @@
         "drupal/core": "^11"
     },
     "require-dev": {
+        "composer/composer": "^2.10.3",
         "drupal/core-dev": "^11"
     },
     "suggest": {

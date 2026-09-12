@@ -156,7 +156,7 @@ The module uses GitHub Actions (`.github/workflows/tests.yml`) plus local PHPCS 
 Test requirements:
 
 - PHP 8.3 or newer with Drupal-required extensions, including `pdo_mysql`, `gd`, `mbstring`, `xml`, and `zip`.
-- Composer 2.
+- Composer 2.10.3 or a newer Composer 2 release.
 - A Drupal 11 codebase with this module located under `web/modules/custom/hear_me` or `web/modules/contrib/hear_me`.
 - Module development dependencies installed with `composer install` from this module directory. These provide PHPUnit, Drupal core-dev, and Drupal Coder for local checks. Do not commit or package `vendor/`.
 - A MySQL/MariaDB database reachable from the PHP process. Kernel and functional tests create isolated Simpletest tables using the `SIMPLETEST_DB` connection string.

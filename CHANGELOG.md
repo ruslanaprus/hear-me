@@ -43,6 +43,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - TTS endpoint requires the `use tts playback` permission and a CSRF request header token.
 - Anonymous playback is intentionally a restricted permission because synthesis can consume server resources.
+- Module development requires `composer/composer` `^2.10.3`.
 
 ### Notes
 

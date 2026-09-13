@@ -147,18 +147,19 @@ The queue worker delegates node field updates and replacement-policy decisions t
 - [Piper HTTP adapter](docs/piper.md)
 - [Provider development](docs/providers.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [Quality gates](docs/quality-gates.md)
 - [Changelog](CHANGELOG.md)
 
 ## Development, Tests, And CI
 
-The module uses GitHub Actions (`.github/workflows/tests.yml`) plus local PHPCS and PHPUnit configuration. The workflow is the executable reference for a clean test environment: it creates a fresh Drupal 11 project, checks this module out under `web/modules/custom/hear_me`, starts MySQL and a PHP web server, then runs Composer validation, PHPCS, and PHPUnit.
+The module uses GitHub Actions (`.github/workflows/tests.yml`) plus local PHPStan, PHPCS, PHPUnit, dependency-audit, deprecation, update-fixture, and release-archive gates. The workflow is the executable reference for a clean test environment: it creates a fresh Drupal 11 project and runs the full suite on both PHP 8.3 and PHP 8.5. See [Quality gates](docs/quality-gates.md) for policies and local commands.
 
 Test requirements:
 
 - PHP 8.3 or newer with Drupal-required extensions, including `pdo_mysql`, `gd`, `mbstring`, `xml`, and `zip`.
 - Composer 2.10.3 or a newer Composer 2 release.
 - A Drupal 11 codebase with this module located under `web/modules/custom/hear_me` or `web/modules/contrib/hear_me`.
-- Module development dependencies installed with `composer install` from this module directory. These provide PHPUnit, Drupal core-dev, and Drupal Coder for local checks. Do not commit or package `vendor/`.
+- Module development dependencies installed with `composer install` from this module directory. These provide PHPUnit, Drupal core-dev, Drush command symbols, Drupal Coder, PHPStan, and `phpstan-drupal` for local checks. Do not commit or package `vendor/`.
 - A MySQL/MariaDB database reachable from the PHP process. Kernel and functional tests create isolated Simpletest tables using the `SIMPLETEST_DB` connection string.
 - An HTTP server serving the Drupal `web/` directory. Functional tests use `SIMPLETEST_BASE_URL` to make real HTTP requests against temporary BrowserTestBase sites.
 
@@ -167,11 +168,14 @@ From this module directory:
 ```bash
 composer install
 composer validate --strict
+composer audit --locked
+composer phpstan
 vendor/bin/phpcs
 SIMPLETEST_BASE_URL=<drupal-base-url> \
 SIMPLETEST_DB=<database-url> \
 BROWSERTEST_OUTPUT_DIRECTORY=/tmp/browser_output \
 php tests/phpunit.php -c phpunit.xml.dist
+bash scripts/check-package.sh
 ```
 
 Set `SIMPLETEST_BASE_URL` and `SIMPLETEST_DB` to addresses reachable from the PHP process running PHPUnit. A MySQL URL has the form `mysql://user:password@host/database`.

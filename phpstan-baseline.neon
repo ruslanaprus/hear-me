@@ -1,0 +1,61 @@
+parameters:
+	ignoreErrors:
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 1
+			path: src/Controller/HearMeController.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 1
+			path: src/Form/HearMeSettingsForm.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 1
+			path: src/Plugin/Block/HearMeBlock.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 1
+			path: src/Plugin/Field/Formatter/TtsAudioFormatter.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 1
+			path: src/Plugin/Filter/FilterTtsPlayback.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 1
+			path: src/Plugin/QueueWorker/HearMeQueueWorker.php
+
+		-
+			message: '#^Logger assigned from LoggerChannelFactory in a class using DependencySerializationTrait will break serialization\. Inject a named logger channel service directly \(e\.g\. @logger\.channel\.my_channel\) instead\.$#'
+			identifier: loggerFromFactory.propertyAssignment
+			count: 1
+			path: src/Plugin/TtsProvider/PiperProvider.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 1
+			path: src/Plugin/TtsProvider/PiperProvider.php
+
+		-
+			message: '#^Storing entity storage as a class property is not recommended\. Call Drupal\\Core\\Entity\\EntityTypeManagerInterface\:\:getStorage\(\) at the call\-site instead\.$#'
+			identifier: drupal.entityStoragePropertyAssignment
+			count: 5
+			path: src/Service/AudioFieldProvisioner.php
+
+		-
+			message: '#^Storing entity storage as a class property is not recommended\. Call Drupal\\Core\\Entity\\EntityTypeManagerInterface\:\:getStorage\(\) at the call\-site instead\.$#'
+			identifier: drupal.entityStoragePropertyAssignment
+			count: 2
+			path: src/Service/AudioMediaFactory.php

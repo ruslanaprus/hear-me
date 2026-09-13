@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - '*'
   pull_request:
   workflow_dispatch:
 
@@ -12,8 +14,15 @@ permissions:
 
 jobs:
   php:
-    name: PHP 8.3 / Drupal 11
+    name: PHP ${{ matrix.php }} / Drupal 11
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php:
+          - '8.3'
+          - '8.5'
 
     services:
       mysql:
@@ -35,7 +44,7 @@ jobs:
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.3'
+          php-version: ${{ matrix.php }}
           extensions: curl, dom, fileinfo, gd, mbstring, pdo_mysql, simplexml, xml, zip
           coverage: none
           tools: composer:v2
@@ -46,6 +55,7 @@ jobs:
       - name: Check out HearMe
         uses: actions/checkout@v7
         with:
+          fetch-depth: 0
           path: drupal/web/modules/custom/hear_me
           persist-credentials: false
 
@@ -56,6 +66,33 @@ jobs:
       - name: Install module development dependencies
         working-directory: drupal/web/modules/custom/hear_me
         run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Audit Drupal project dependencies
+        working-directory: drupal
+        run: composer audit --locked --no-interaction
+
+      - name: Audit module development dependencies
+        working-directory: drupal/web/modules/custom/hear_me
+        run: composer audit --locked --no-interaction
+
+      - name: Check release archive
+        if: matrix.php == '8.3'
+        working-directory: drupal/web/modules/custom/hear_me
+        run: bash scripts/check-package.sh
+
+      - name: Enforce release fixture policy
+        if: matrix.php == '8.3'
+        working-directory: drupal/web/modules/custom/hear_me
+        run: bash scripts/check-release-fixtures.sh
+
+      - name: Run PHPStan
+        working-directory: drupal/web/modules/custom/hear_me
+        run: |
+          composer phpstan
+          if grep -Eiq 'deprecated|deprecation' phpstan-baseline.neon; then
+            echo "PHPStan deprecation findings must not be added to the baseline." >&2
+            exit 1
+          fi
 
       - name: Run PHPCS
         working-directory: drupal/web/modules/custom/hear_me
@@ -78,14 +115,21 @@ jobs:
           SIMPLETEST_DB: mysql://drupal:drupal@127.0.0.1:3306/drupal
           BROWSERTEST_OUTPUT_DIRECTORY: ${{ runner.temp }}/browser_output
         run: |
+          set -o pipefail
+          bash scripts/check-deprecation-events.sh --self-test
           mkdir -p "$BROWSERTEST_OUTPUT_DIRECTORY"
-          php tests/phpunit.php -c phpunit.xml.dist
+          php tests/phpunit.php -c phpunit.xml.dist \
+            --log-events-text "$RUNNER_TEMP/phpunit-events.log" \
+            2>&1 | tee "$RUNNER_TEMP/phpunit.log"
+          bash scripts/check-deprecation-events.sh "$RUNNER_TEMP/phpunit-events.log"
 
       - name: Upload browser test output
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: browser-test-output
+          name: browser-test-output-php-${{ matrix.php }}
           path: |
             ${{ runner.temp }}/browser_output
             ${{ runner.temp }}/php-server.log
+            ${{ runner.temp }}/phpunit-events.log
+            ${{ runner.temp }}/phpunit.log

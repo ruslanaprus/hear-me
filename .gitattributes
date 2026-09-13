@@ -6,5 +6,12 @@
 /.github/** export-ignore
 /.idea export-ignore
 /.phpunit.cache export-ignore
+/.phpstan-cache export-ignore
 /composer.lock export-ignore
+/phpcs.xml.dist export-ignore
+/phpstan-baseline.neon export-ignore
+/phpstan.neon.dist export-ignore
+/phpunit.xml.dist export-ignore
+/scripts export-ignore
+/tests export-ignore
 /vendor export-ignore

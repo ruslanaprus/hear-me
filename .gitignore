@@ -27,6 +27,7 @@ composer.lock
 
 # PHPUnit / testing
 .phpunit.cache/
+.phpstan-cache/
 /web/sites/simpletest/
 
 # -----------------------------

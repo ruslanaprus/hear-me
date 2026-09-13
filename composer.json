@@ -22,7 +22,10 @@
     },
     "require-dev": {
         "composer/composer": "^2.10.3",
-        "drupal/core-dev": "^11"
+        "drupal/core-dev": "^11",
+        "drush/drush": "^13",
+        "mglaman/phpstan-drupal": "^2.2",
+        "phpstan/phpstan": "^2.2"
     },
     "suggest": {
         "drush/drush": "Enables optional HearMe Drush commands, including queueing existing content from the command line."
@@ -31,14 +34,17 @@
         "allow-plugins": {
             "composer/installers": true,
             "dealerdirect/phpcodesniffer-composer-installer": true,
-            "drupal/core-composer-scaffold": true,
-            "drupal/core-project-message": true,
-            "drupal/core-recipe-unpack": true,
+            "drupal/core-composer-scaffold": false,
+            "drupal/core-project-message": false,
+            "drupal/core-recipe-unpack": false,
             "php-http/discovery": true,
             "php-tuf/composer-integration": true,
             "phpstan/extension-installer": true,
             "symfony/runtime": true
         }
+    },
+    "scripts": {
+        "phpstan": "phpstan analyse --memory-limit=1G"
     },
     "autoload": {
         "psr-4": {

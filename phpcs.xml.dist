@@ -17,6 +17,7 @@
   <exclude-pattern>vendor/*</exclude-pattern>
   <exclude-pattern>.github/*</exclude-pattern>
   <exclude-pattern>.git/*</exclude-pattern>
+  <exclude-pattern>.phpstan-cache/*</exclude-pattern>
   <exclude-pattern>*.patch</exclude-pattern>
 
   <!-- Baseline existing style debt so CI can start enforcing Drupal Coder. -->

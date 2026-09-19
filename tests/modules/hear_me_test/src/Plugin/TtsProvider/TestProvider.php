@@ -36,13 +36,6 @@ class TestProvider extends PluginBase implements TtsProviderInterface {
   /**
    * {@inheritdoc}
    */
-  public function getDefaultMimeType(): string {
-    return 'audio/wav';
-  }
-
-  /**
-   * {@inheritdoc}
-   */
   public function getDefaultExtension(): string {
     return 'wav';
   }

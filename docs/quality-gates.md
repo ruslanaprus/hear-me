@@ -1,6 +1,6 @@
 # Quality Gates
 
-HearMe's GitHub Actions workflow runs the module against a fresh Drupal 11 project on both PHP 8.3, the declared minimum, and PHP 8.5, the current supported runtime used by the project. Both matrix jobs run Composer validation and audits, PHPStan, PHPCS, and the full PHPUnit suite.
+HearMe's GitHub Actions workflow runs the module against a fresh Drupal 11 project on both PHP 8.3, the declared minimum, and PHP 8.5, the current supported runtime used by the project. Both matrix jobs run Composer validation and audits, PHPStan, PHPCS, and the full PHPUnit suite. This document describes checks available from a source checkout; development files are intentionally excluded from release archives.
 
 ## Local checks
 

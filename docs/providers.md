@@ -107,10 +107,9 @@ Every provider implements `Drupal\hear_me\Plugin\TtsProvider\TtsProviderInterfac
 |---|---|
 | `synthesize(string $text, string $lang): ?TtsSynthesisResult` | Generate audio. Return `NULL` when the backend cannot produce usable audio. |
 | `getSupportedLanguages(): array` | Return language codes accepted by the backend, such as `['en', 'uk']`. |
-| `getDefaultMimeType(): string` | Declare the provider's normal output MIME type, such as `audio/mpeg`. |
 | `getDefaultExtension(): string` | Return the normal extension without a dot, such as `mp3`. HearMe uses it when preparing cache filenames before synthesis. |
 
-Keep these format declarations consistent with successful synthesis results. In particular, a result extension must match `getDefaultExtension()` for persisted and cached workflows.
+Keep successful result formats consistent with the default extension. In particular, a result extension must match `getDefaultExtension()` for persisted and cached workflows.
 
 ## Minimal Provider Example
 
@@ -233,10 +232,6 @@ final class ExampleProvider extends PluginBase implements TtsProviderInterface, 
 
   public function getSupportedLanguages(): array {
     return ['en', 'uk'];
-  }
-
-  public function getDefaultMimeType(): string {
-    return 'audio/mpeg';
   }
 
   public function getDefaultExtension(): string {

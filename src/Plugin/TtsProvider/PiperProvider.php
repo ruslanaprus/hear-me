@@ -4,7 +4,6 @@ namespace Drupal\hear_me\Plugin\TtsProvider;
 
 use Drupal\Component\Utility\UrlHelper;
 use Drupal\Core\Form\FormStateInterface;
-use Drupal\Core\Language\LanguageManagerInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\Core\Plugin\ConfigurablePluginBase;
 use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
@@ -16,6 +15,7 @@ use Drupal\hear_me\TtsSynthesisResult;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 use Symfony\Component\DependencyInjection\ContainerInterface;
+use Symfony\Component\HttpFoundation\IpUtils;
 
 /**
  * TTS provider adapter for a Piper-compatible HTTP service.
@@ -28,8 +28,21 @@ class PiperProvider extends ConfigurablePluginBase implements TtsProviderInterfa
 
   use StringTranslationTrait;
 
+  private const MAX_AUDIO_RESPONSE_BYTES = 16777216;
+
+  private const BLOCKED_INFRASTRUCTURE_RANGES = [
+    '169.254.0.0/16',
+    '100.100.100.200/32',
+    '168.63.129.16/32',
+    'fe80::/10',
+    'fd00:ec2::/32',
+    'fd20:ce::/64',
+    '::ffff:0:0/96',
+    '64:ff9b::/96',
+    '64:ff9b:1::/48',
+  ];
+
   protected ClientInterface $httpClient;
-  protected LanguageManagerInterface $languageManager;
   protected $logger;
 
   /**
@@ -43,8 +56,6 @@ class PiperProvider extends ConfigurablePluginBase implements TtsProviderInterfa
    *   The plugin definition.
    * @param \GuzzleHttp\ClientInterface $http_client
    *   The HTTP client.
-   * @param \Drupal\Core\Language\LanguageManagerInterface $language_manager
-   *   The language manager.
    * @param \Drupal\Core\Logger\LoggerChannelFactoryInterface $logger_factory
    *   The logger channel factory.
    */
@@ -53,12 +64,10 @@ class PiperProvider extends ConfigurablePluginBase implements TtsProviderInterfa
     $plugin_id,
     $plugin_definition,
     ClientInterface $http_client,
-    LanguageManagerInterface $language_manager,
     LoggerChannelFactoryInterface $logger_factory,
   ) {
     parent::__construct($configuration, $plugin_id, $plugin_definition);
     $this->httpClient        = $http_client;
-    $this->languageManager   = $language_manager;
     $this->logger            = $logger_factory->get('hear_me');
   }
 
@@ -71,13 +80,8 @@ class PiperProvider extends ConfigurablePluginBase implements TtsProviderInterfa
       $plugin_id,
       $plugin_definition,
       $container->get('http_client'),
-      $container->get('language_manager'),
       $container->get('logger.factory'),
     );
-  }
-
-  public function getDefaultMimeType(): string {
-    return 'audio/wav';
   }
 
   public function getDefaultExtension(): string {
@@ -97,7 +101,7 @@ class PiperProvider extends ConfigurablePluginBase implements TtsProviderInterfa
       '#type' => 'checkbox',
       '#title' => $this->t('Allow local/private provider endpoints'),
       '#default_value' => $this->configuration['allow_private_endpoint_urls'] ?? FALSE,
-      '#description' => $this->t('Keep disabled unless the Piper-compatible service intentionally runs on a trusted loopback, private, link-local, or reserved IP address. Docker/DDEV service names such as piper-service are hostnames and do not require this option.'),
+      '#description' => $this->t('Keep disabled unless the Piper-compatible service intentionally runs on a trusted loopback, private, or reserved address. Docker/DDEV service names that resolve to private addresses require this option. Link-local infrastructure ranges remain blocked.'),
     ];
 
     $form['endpoint'] = [
@@ -113,24 +117,16 @@ class PiperProvider extends ConfigurablePluginBase implements TtsProviderInterfa
       '#type'          => 'textfield',
       '#title'         => $this->t('Supported Language Codes'),
       '#default_value' => implode(', ', $this->configuration['supported_langs'] ?? ['en']),
-      '#description'   => $this->t('Comma-separated list of language codes this provider supports (e.g. <code>en, uk</code>). Must match the voice files installed on the Piper service.'),
+      '#description'   => $this->t('Comma-separated voice-registry keys this provider supports (e.g. <code>en, uk_UA</code>). Values are sent to Piper exactly as saved and must match its registry.'),
       '#required'      => TRUE,
     ];
 
-    $langOptions = [];
-    $drupalLangs = $this->languageManager->getLanguages();
-    foreach ($this->getSupportedLanguages() as $code) {
-      $shortCode = strtolower(substr($code, 0, 2));
-      $langOptions[$code] = isset($drupalLangs[$code])
-        ? $drupalLangs[$code]->getName()
-        : (isset($drupalLangs[$shortCode]) ? $drupalLangs[$shortCode]->getName() : strtoupper($code));
-    }
-
     $form['default_lang'] = [
-      '#type'          => 'select',
+      '#type'          => 'textfield',
       '#title'         => $this->t('Default Language'),
-      '#options'       => $langOptions,
       '#default_value' => $this->configuration['default_lang'] ?? 'en',
+      '#description'   => $this->t('Voice-registry key used when a request does not specify one. It must be present in Supported Language Codes.'),
+      '#required'      => TRUE,
     ];
 
     return $form;
@@ -139,18 +135,37 @@ class PiperProvider extends ConfigurablePluginBase implements TtsProviderInterfa
   /**
    * {@inheritdoc}
    */
-  public function validateConfigurationForm(array &$form, FormStateInterface $form_state): void {}
+  public function validateConfigurationForm(array &$form, FormStateInterface $form_state): void {
+    $langs = self::normalizeLanguages((string) ($form_state->getValue('supported_langs') ?? ''));
+    if (!$langs) {
+      $form_state->setErrorByName('supported_langs', $this->t('Enter at least one supported language code.'));
+      return;
+    }
+    if (count($langs) > 50) {
+      $form_state->setErrorByName('supported_langs', $this->t('Enter no more than 50 supported language codes.'));
+    }
+    foreach ($langs as $lang) {
+      if (!preg_match('/^[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})*$/', $lang)) {
+        $form_state->setErrorByName('supported_langs', $this->t('The language code %lang is invalid.', ['%lang' => $lang]));
+      }
+    }
+
+    $defaultLang = self::findSupportedLanguage((string) ($form_state->getValue('default_lang') ?? ''), $langs);
+    if ($defaultLang === NULL) {
+      $form_state->setErrorByName('default_lang', $this->t('The default language must be included in Supported Language Codes.'));
+    }
+  }
 
   /**
    * {@inheritdoc}
    */
   public function submitConfigurationForm(array &$form, FormStateInterface $form_state): void {
-    $rawLangs = $form_state->getValue('supported_langs') ?? '';
-    $langs = array_values(array_filter(array_map('trim', explode(',', $rawLangs))));
+    $langs = self::normalizeLanguages((string) ($form_state->getValue('supported_langs') ?? ''));
+    $defaultLang = self::findSupportedLanguage((string) $form_state->getValue('default_lang'), $langs);
     $this->setConfiguration([
       'endpoint' => trim((string) ($form_state->getValue('endpoint') ?? '')),
       'allow_private_endpoint_urls' => (bool) ($form_state->getValue('allow_private_endpoint_urls') ?? FALSE),
-      'default_lang' => $form_state->getValue('default_lang'),
+      'default_lang' => $defaultLang ?? trim((string) $form_state->getValue('default_lang')),
       'supported_langs' => $langs,
     ]);
   }
@@ -171,7 +186,8 @@ class PiperProvider extends ConfigurablePluginBase implements TtsProviderInterfa
     }
   }
 
-  protected static function getEndpointValidationError(string $endpoint, bool $allowPrivateEndpointUrls = FALSE): ?TranslatableMarkup {
+  protected static function getEndpointValidationError(string $endpoint, bool $allowPrivateEndpointUrls = FALSE, ?array &$resolvedAddresses = NULL): ?TranslatableMarkup {
+    $resolvedAddresses = [];
     if (!UrlHelper::isValid($endpoint, TRUE)) {
       return new TranslatableMarkup('The Piper-compatible endpoint must be an absolute URL, for example https://tts.example.com/tts.');
     }
@@ -200,7 +216,7 @@ class PiperProvider extends ConfigurablePluginBase implements TtsProviderInterfa
 
     $host = strtolower(trim((string) $parts['host'], '[]'));
     $host = rtrim($host, '.');
-    if (static::isMetadataIpLiteral($host)) {
+    if (static::isBlockedInfrastructureAddress($host)) {
       return new TranslatableMarkup('Metadata service endpoint URLs are blocked. Do not point the Piper-compatible endpoint at 169.254.169.254 or equivalent metadata services.');
     }
 
@@ -212,12 +228,27 @@ class PiperProvider extends ConfigurablePluginBase implements TtsProviderInterfa
       return new TranslatableMarkup('Loopback, private, link-local, multicast, and reserved IP endpoint URLs are blocked by default. Enable local/private provider endpoints only when the service is trusted.');
     }
 
+    if (!filter_var($host, FILTER_VALIDATE_IP)) {
+      $resolvedAddresses = static::resolveHostAddresses($host);
+      if (!$resolvedAddresses) {
+        return new TranslatableMarkup('The Piper-compatible endpoint hostname could not be resolved to an IPv4 or IPv6 address.');
+      }
+      foreach ($resolvedAddresses as $address) {
+        if (static::isBlockedInfrastructureAddress($address)) {
+          return new TranslatableMarkup('Metadata service endpoint URLs are blocked. Do not point the Piper-compatible endpoint at 169.254.169.254 or equivalent metadata services.');
+        }
+        if (!$allowPrivateEndpointUrls && static::isNonPublicIpLiteral($address)) {
+          return new TranslatableMarkup('The endpoint hostname resolves to a non-public IP address. Enable local/private provider endpoints only when the service is trusted.');
+        }
+      }
+    }
+
     return NULL;
   }
 
-  protected static function isMetadataIpLiteral(string $host): bool {
-    return $host === '169.254.169.254'
-      || $host === 'fd00:ec2::254';
+  protected static function isBlockedInfrastructureAddress(string $host): bool {
+    return filter_var($host, FILTER_VALIDATE_IP) !== FALSE
+      && IpUtils::checkIp($host, self::BLOCKED_INFRASTRUCTURE_RANGES);
   }
 
   protected static function isNonPublicIpLiteral(string $host): bool {
@@ -225,7 +256,34 @@ class PiperProvider extends ConfigurablePluginBase implements TtsProviderInterfa
       return FALSE;
     }
 
-    return !filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
+    return IpUtils::isPrivateIp($host)
+      || !filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
+  }
+
+  /**
+   * Resolves currently advertised IPv4 and IPv6 addresses for a host.
+   */
+  protected static function resolveHostAddresses(string $host): array {
+    $addresses = @gethostbynamel($host) ?: [];
+    $records = @dns_get_record($host, DNS_AAAA);
+    if (is_array($records)) {
+      foreach ($records as $record) {
+        if (!empty($record['ipv6'])) {
+          $addresses[] = $record['ipv6'];
+        }
+      }
+    }
+
+    $normalized = [];
+    foreach ($addresses as $address) {
+      $packed = @inet_pton((string) $address);
+      if ($packed !== FALSE) {
+        $normalized[] = inet_ntop($packed);
+      }
+    }
+    $normalized = array_values(array_unique($normalized));
+    sort($normalized, SORT_STRING);
+    return $normalized;
   }
 
   /**
@@ -237,32 +295,53 @@ class PiperProvider extends ConfigurablePluginBase implements TtsProviderInterfa
   public function synthesize(string $text, string $lang): ?TtsSynthesisResult {
     $endpoint = trim((string) ($this->configuration['endpoint'] ?? ''));
     $allowPrivateEndpointUrls = (bool) ($this->configuration['allow_private_endpoint_urls'] ?? FALSE);
+    $resolvedAddresses = [];
     $validationError = $endpoint === ''
       ? new TranslatableMarkup('The Piper-compatible endpoint is empty.')
-      : static::getEndpointValidationError($endpoint, $allowPrivateEndpointUrls);
+      : static::getEndpointValidationError($endpoint, $allowPrivateEndpointUrls, $resolvedAddresses);
     if ($validationError !== NULL) {
-      $this->logger->error('Piper TTS endpoint is invalid: @message', ['@message' => (string) $validationError]);
+      $this->logger->error('Piper TTS endpoint is invalid: @message', ['@message' => $validationError->getUntranslatedString()]);
       return NULL;
     }
 
+    $requestOptions = [
+      'json' => ['text' => $text, 'lang' => $lang],
+      'connect_timeout' => 5,
+      'timeout' => 30,
+      'stream' => TRUE,
+      'allow_redirects' => FALSE,
+      'proxy' => '',
+      'curl' => [
+        CURLOPT_FRESH_CONNECT => TRUE,
+        CURLOPT_FORBID_REUSE => TRUE,
+      ],
+      'headers' => [
+        'Accept' => 'audio/wav',
+      ],
+    ];
+    if ($resolvedAddresses) {
+      $parts = parse_url($endpoint);
+      $host = rtrim(strtolower(trim((string) ($parts['host'] ?? ''), '[]')), '.');
+      $port = (int) ($parts['port'] ?? (($parts['scheme'] ?? '') === 'https' ? 443 : 80));
+      foreach ($resolvedAddresses as &$address) {
+        if (filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+          $address = '[' . $address . ']';
+        }
+      }
+      unset($address);
+      $requestOptions['curl'][CURLOPT_RESOLVE] = [sprintf('%s:%d:%s', $host, $port, implode(',', $resolvedAddresses))];
+    }
+
     try {
-      $response = $this->httpClient->request('POST', $endpoint, [
-        'json' => ['text' => $text, 'lang' => $lang],
-        'connect_timeout' => 5,
-        'timeout' => 30,
-        'allow_redirects' => FALSE,
-        'headers' => [
-          'Accept' => 'audio/*',
-        ],
-      ]);
+      $response = $this->httpClient->request('POST', $endpoint, $requestOptions);
     }
     catch (GuzzleException $e) {
       $this->logger->error(
-        'Piper TTS HTTP request failed (endpoint: @endpoint, lang: @lang): @message',
+        'Piper TTS HTTP request failed (endpoint: @endpoint, lang: @lang, error: @error).',
         [
           '@endpoint' => self::getEndpointForLog($endpoint),
           '@lang'     => $lang,
-          '@message'  => $e->getMessage(),
+          '@error'    => $e::class,
         ]
       );
       return NULL;
@@ -281,10 +360,10 @@ class PiperProvider extends ConfigurablePluginBase implements TtsProviderInterfa
       return NULL;
     }
 
-    $contentType = strtolower(trim($response->getHeaderLine('Content-Type')));
-    if ($contentType === '' || !str_starts_with($contentType, 'audio/')) {
+    $contentType = strtolower(trim(explode(';', $response->getHeaderLine('Content-Type'), 2)[0]));
+    if ($contentType !== 'audio/wav') {
       $this->logger->warning(
-        'Piper TTS returned non-audio Content-Type @type (endpoint: @endpoint, lang: @lang).',
+        'Piper TTS returned unsupported Content-Type @type (endpoint: @endpoint, lang: @lang).',
         [
           '@type' => $contentType === '' ? 'none' : $contentType,
           '@endpoint' => self::getEndpointForLog($endpoint),
@@ -294,9 +373,50 @@ class PiperProvider extends ConfigurablePluginBase implements TtsProviderInterfa
       return NULL;
     }
 
+    $body = $response->getBody();
+    $declaredSize = $body->getSize();
+    if ($declaredSize !== NULL && $declaredSize > self::MAX_AUDIO_RESPONSE_BYTES) {
+      $body->close();
+      $this->logger->warning('Piper TTS response exceeded the maximum audio size (endpoint: @endpoint, lang: @lang).', [
+        '@endpoint' => self::getEndpointForLog($endpoint),
+        '@lang' => $lang,
+      ]);
+      return NULL;
+    }
+
+    $bytes = '';
+    $complete = FALSE;
+    try {
+      while (!$body->eof() && strlen($bytes) <= self::MAX_AUDIO_RESPONSE_BYTES) {
+        $chunk = $body->read(min(8192, self::MAX_AUDIO_RESPONSE_BYTES + 1 - strlen($bytes)));
+        if ($chunk === '' && !$body->eof()) {
+          throw new \RuntimeException('The Piper response stream stopped making progress.');
+        }
+        $bytes .= $chunk;
+      }
+      $complete = $body->eof();
+    }
+    catch (\RuntimeException) {
+      $this->logger->warning('Piper TTS response could not be read (endpoint: @endpoint, lang: @lang).', [
+        '@endpoint' => self::getEndpointForLog($endpoint),
+        '@lang' => $lang,
+      ]);
+      return NULL;
+    }
+    finally {
+      $body->close();
+    }
+    if ($bytes === '' || strlen($bytes) > self::MAX_AUDIO_RESPONSE_BYTES || !$complete) {
+      $this->logger->warning('Piper TTS returned empty or oversized audio (endpoint: @endpoint, lang: @lang).', [
+        '@endpoint' => self::getEndpointForLog($endpoint),
+        '@lang' => $lang,
+      ]);
+      return NULL;
+    }
+
     return new TtsSynthesisResult(
-      $response->getBody()->getContents(),
-      $this->getDefaultMimeType(),
+      $bytes,
+      'audio/wav',
       $this->getDefaultExtension(),
     );
   }
@@ -316,10 +436,34 @@ class PiperProvider extends ConfigurablePluginBase implements TtsProviderInterfa
       $authority .= ':' . (int) $parts['port'];
     }
 
-    $path = (string) ($parts['path'] ?? '');
-    $query = isset($parts['query']) ? '?[redacted]' : '';
+    return $authority;
+  }
 
-    return $authority . $path . $query;
+  /**
+   * Normalizes comma-separated provider language codes.
+   */
+  private static function normalizeLanguages(string $rawLanguages): array {
+    $languages = [];
+    foreach (explode(',', $rawLanguages) as $language) {
+      $language = trim($language);
+      if ($language !== '') {
+        $languages[strtolower(str_replace('_', '-', $language))] = $language;
+      }
+    }
+    return array_values($languages);
+  }
+
+  /**
+   * Finds the exact registry key matching a normalized language value.
+   */
+  private static function findSupportedLanguage(string $language, array $supportedLanguages): ?string {
+    $normalized = strtolower(str_replace('_', '-', trim($language)));
+    foreach ($supportedLanguages as $supportedLanguage) {
+      if (strtolower(str_replace('_', '-', $supportedLanguage)) === $normalized) {
+        return $supportedLanguage;
+      }
+    }
+    return NULL;
   }
 
 }

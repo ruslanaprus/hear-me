@@ -29,17 +29,6 @@ interface TtsProviderInterface extends PluginInspectionInterface {
   public function getSupportedLanguages(): array;
 
   /**
-   * Returns the provider's default audio MIME type.
-   *
-   * Used for cache lookup before synthesis occurs. Individual synthesis results
-   * may still return a different MIME type if a provider supports that.
-   *
-   * @return string
-   *   MIME type, e.g. 'audio/wav'.
-   */
-  public function getDefaultMimeType(): string;
-
-  /**
    * Returns the provider's default audio file extension.
    *
    * @return string

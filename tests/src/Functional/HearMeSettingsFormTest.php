@@ -48,18 +48,18 @@ class HearMeSettingsFormTest extends BrowserTestBase {
       'provider' => 'piper',
       'runtime_cache_scheme' => 'public',
       'max_text_length' => 4000,
-      'provider_settings[endpoint]' => 'https://tts.example.com/tts',
-      'provider_settings[supported_langs]' => 'en, uk',
-      'provider_settings[default_lang]' => 'en',
+      'provider_settings[endpoint]' => 'https://1.1.1.1/tts',
+      'provider_settings[supported_langs]' => 'en, uk_UA',
+      'provider_settings[default_lang]' => 'UK-ua',
     ], 'Save configuration');
 
     $this->assertSession()->pageTextContains('The configuration options have been saved.');
     $this->assertSame('public', $this->config('hear_me.settings')->get('runtime_cache_scheme'));
     $this->assertSame(4000, $this->config('hear_me.settings')->get('max_text_length'));
-    $this->assertSame('https://tts.example.com/tts', $this->config('hear_me.provider.piper')->get('endpoint'));
+    $this->assertSame('https://1.1.1.1/tts', $this->config('hear_me.provider.piper')->get('endpoint'));
     $this->assertFalse($this->config('hear_me.provider.piper')->get('allow_private_endpoint_urls'));
-    $this->assertSame('en', $this->config('hear_me.provider.piper')->get('default_lang'));
-    $this->assertSame(['en', 'uk'], $this->config('hear_me.provider.piper')->get('supported_langs'));
+    $this->assertSame('uk_UA', $this->config('hear_me.provider.piper')->get('default_lang'));
+    $this->assertSame(['en', 'uk_UA'], $this->config('hear_me.provider.piper')->get('supported_langs'));
     $savedProviderConfig = $this->config('hear_me.provider.piper')->getRawData();
 
     $this->submitForm([
@@ -87,6 +87,14 @@ class HearMeSettingsFormTest extends BrowserTestBase {
     $this->assertSession()->pageTextContains('Loopback, private, link-local, multicast, and reserved IP endpoint URLs are blocked by default.');
     $this->assertSame('http://127.0.0.1:5000/tts', $this->config('hear_me.provider.piper')->get('endpoint'));
     $this->assertTrue($this->config('hear_me.provider.piper')->get('allow_private_endpoint_urls'));
+
+    $savedProviderConfig = $this->config('hear_me.provider.piper')->getRawData();
+    $this->submitForm([
+      'provider_settings[supported_langs]' => 'fr',
+      'provider_settings[default_lang]' => 'en',
+    ], 'Save configuration');
+    $this->assertSession()->pageTextContains('The default language must be included in Supported Language Codes.');
+    $this->assertSame($savedProviderConfig, $this->config('hear_me.provider.piper')->getRawData());
   }
 
   /**
@@ -107,12 +115,12 @@ class HearMeSettingsFormTest extends BrowserTestBase {
     $this->drupalGet('/admin/config/media/hear-me');
     $this->assertSession()->fieldValueEquals('provider_settings[endpoint]', 'https://stored.example.com/tts');
     $this->submitForm([
-      'provider_settings[endpoint]' => 'https://submitted.example.com/tts',
+      'provider_settings[endpoint]' => 'https://8.8.8.8/tts',
     ], 'Save configuration');
 
     $this->assertSession()->pageTextContains('The configuration options have been saved.');
-    $this->assertSame('https://submitted.example.com/tts', $this->config('hear_me.provider.piper')->get('endpoint'));
-    $this->assertSession()->fieldValueEquals('provider_settings[endpoint]', 'https://submitted.example.com/tts');
+    $this->assertSame('https://8.8.8.8/tts', $this->config('hear_me.provider.piper')->get('endpoint'));
+    $this->assertSession()->fieldValueEquals('provider_settings[endpoint]', 'https://8.8.8.8/tts');
   }
 
   /**
@@ -376,23 +384,15 @@ class HearMeSettingsFormTest extends BrowserTestBase {
     $this->assertSession()->buttonNotExists('Confirm queue existing content');
     $this->assertSame(0, $queue->numberOfItems());
 
-    $unpublishedEdit = $this->backfillEdit() + [
-      'existing_content_queue[include_unpublished]' => TRUE,
-    ];
-    $this->submitForm($unpublishedEdit, 'Queue existing content');
-    $this->assertSession()->pageTextContains('Confirm that generated audio for unpublished content may be publicly accessible before queueing unpublished content.');
-    $this->assertSession()->buttonNotExists('Confirm queue existing content');
-    $this->assertSame(0, $queue->numberOfItems());
-
-    $unpublishedEdit['existing_content_queue[confirm_unpublished_public_audio]'] = TRUE;
-    $this->submitForm($unpublishedEdit, 'Queue existing content');
-    $this->assertSession()->pageTextContains('Estimated candidate nodes to scan: 2.');
-    $this->assertSession()->pageTextContains('Publication mode: published and unpublished content.');
+    $this->assertSession()->fieldNotExists('existing_content_queue[include_unpublished]');
+    $this->submitForm($this->backfillEdit(), 'Queue existing content');
+    $this->assertSession()->pageTextContains('Estimated candidate nodes to scan: 1.');
+    $this->assertSession()->pageTextContains('Publication mode: published content only.');
     $this->assertSame(0, $queue->numberOfItems());
 
     $this->submitForm([], 'Confirm queue existing content');
-    $this->assertSession()->pageTextContains('Existing content queueing finished. Scanned 2 node(s), queued 2 audio job(s).');
-    $this->assertSame(2, $queue->numberOfItems());
+    $this->assertSession()->pageTextContains('Existing content queueing finished. Scanned 1 node(s), queued 1 audio job(s).');
+    $this->assertSame(1, $queue->numberOfItems());
   }
 
   /**

@@ -7,12 +7,12 @@ HearMe intentionally supports two PHP integration boundaries before its first st
 A provider module uses these supported types:
 
 - `Drupal\hear_me\Attribute\TtsProvider` for plugin discovery, with a permanent `id` and translated `label`.
-- `Drupal\hear_me\Plugin\TtsProvider\TtsProviderInterface` for synthesis, supported-language, MIME-type, and file-extension declarations.
+- `Drupal\hear_me\Plugin\TtsProvider\TtsProviderInterface` for synthesis, supported-language, and file-extension declarations.
 - `Drupal\hear_me\TtsSynthesisResult` as the provider's successful synthesis result.
 - Drupal's `ContainerFactoryPluginInterface` when the provider injects services.
 - Drupal's `ConfigurableInterface` and `PluginFormInterface` when the provider has administrator-editable configuration.
 
-`TtsSynthesisResult` exposes readonly `bytes`, `mimeType`, and `extension` properties. Providers return `NULL` when they cannot produce usable audio. The extension is normalized to lowercase ASCII letters and numbers, with `bin` as the fallback.
+`TtsSynthesisResult` exposes readonly `bytes`, `mimeType`, and `extension` properties, and its MIME type is authoritative for each successful response. Providers return `NULL` when they cannot produce usable audio. The extension is normalized to lowercase ASCII letters and numbers, with `bin` as the fallback.
 
 Provider configuration uses one object per plugin:
 
@@ -37,13 +37,13 @@ getTrustedRuntimeSource(string $text, string $lang, string $source, ?string $cac
 
 ### Runtime synthesis
 
-`getAudio()` returns a `Drupal\hear_me\TtsAudioResult` or `NULL` when the selected provider is unavailable or returns no usable result. Runtime sources are `inline`, `page`, `selection`, and `adhoc`; unknown values normalize to `adhoc`. Passing a provider ID keeps a multi-step operation tied to that provider identity instead of resolving the active provider again. Missing required active-provider configuration raises a `RuntimeException`, and unexpected provider, cache, or storage exceptions are not converted to `NULL`.
+`getAudio()` returns a `Drupal\hear_me\TtsAudioResult` or `NULL` when the text exceeds the configured maximum TTS text length, the selected provider is unavailable, or the provider returns no usable result. The same text limit applies to `synthesize()`. Runtime sources are `inline`, `page`, `selection`, and `adhoc`; unknown values normalize to `adhoc`. Passing a provider ID keeps a multi-step operation tied to that provider identity instead of resolving the active provider again. Missing required active-provider configuration raises a `RuntimeException`, and unexpected provider, cache, or storage exceptions are not converted to `NULL`.
 
 `TtsAudioResult` exposes readonly `bytes`, `mimeType`, `extension`, `uri`, and `fid` properties. `uri` and `fid` are `NULL` when the audio was not persisted. Callers must use the returned MIME type and extension rather than assuming WAV.
 
 ### Persistent synthesis
 
-`synthesize()` forces generated audio into HearMe's entity-audio storage and returns a `MediaInterface` suitable for server-side attachment workflows. It returns `NULL` when synthesis does not produce a persisted audio URI. Drupal File or Media persistence exceptions are not converted to `NULL` and can propagate to the caller.
+`synthesize()` forces generated audio into HearMe's entity-audio storage and returns a `MediaInterface` suitable for server-side attachment workflows. It returns `NULL` when the provider returns no usable synthesis result. It throws `Drupal\hear_me\Exception\PersistentSynthesisUnavailableException` when provider discovery, synthesis locking, or persistent cache storage is temporarily unavailable. Drupal File or Media persistence exceptions are not converted to `NULL` and can propagate to the caller.
 
 ### Inline cache-source tokens
 

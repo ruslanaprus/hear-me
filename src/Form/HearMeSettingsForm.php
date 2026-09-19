@@ -355,7 +355,7 @@ class HearMeSettingsForm extends ConfigFormBase {
     $form['max_text_length'] = [
       '#type' => 'number',
       '#title' => $this->t('Maximum TTS text length'),
-      '#description' => $this->t('Maximum normalized text length accepted by the TTS endpoint, in characters.'),
+      '#description' => $this->t('Maximum normalized text length accepted by the TTS endpoint, queue generation, and synthesis service, in characters.'),
       '#default_value' => $config->get('max_text_length') ?? HearMeInputValidator::DEFAULT_MAX_TEXT_LENGTH,
       '#min' => HearMeInputValidator::MIN_TEXT_LENGTH,
       '#max' => HearMeInputValidator::ABSOLUTE_MAX_TEXT_LENGTH,
@@ -379,7 +379,7 @@ class HearMeSettingsForm extends ConfigFormBase {
       '#description'   => $this->t(
         'When a new node of the selected type is created, its configured source text '
         . 'is queued for background TTS synthesis. Leave all unchecked to '
-        . 'disable automatic pre-generation entirely. Queue-generated media uses the installed HearMe Audio file field, which stores files publicly by default.'
+        . 'disable automatic pre-generation entirely. Only published nodes and source fields available to anonymous visitors are eligible. Queue-generated media uses the installed HearMe Audio file field, which stores files publicly by default.'
       ),
       '#options'       => $bundleOptions,
       '#default_value' => $backfillConfirmation['bundles'] ?? $config->get('queue_bundles') ?? [],
@@ -392,7 +392,7 @@ class HearMeSettingsForm extends ConfigFormBase {
     );
 
     $form['queue_generated_audio_public_warning'] = $this->buildWarning(
-      $this->t('Queue-generated audio attached to content is saved as Media/File entities under public://tts/. Those files can be publicly reachable by URL, including audio generated from unpublished or access-restricted content. Only enable queue pre-generation for content that is safe to expose as generated audio.')
+      $this->t('Queue-generated audio attached to content is saved as Media/File entities under public://tts/. HearMe queues only published nodes and includes only source fields viewable by anonymous visitors. Review site-specific access rules before enabling a content type.')
     );
 
     $form['replace_existing_generated_audio'] = [
@@ -446,28 +446,8 @@ class HearMeSettingsForm extends ConfigFormBase {
     ];
 
     $form['existing_content_queue']['public_audio_warning'] = $this->buildWarning(
-      $this->t('Backfilled audio is saved under public://tts/ as generated Media/File entities. Do not include unpublished or access-restricted content unless the generated audio is safe to expose by public file URL.')
+      $this->t('Backfilled audio is saved under public://tts/ as generated Media/File entities. Only published nodes and source fields viewable by anonymous visitors are eligible.')
     );
-
-    $form['existing_content_queue']['unpublished_audio_warning'] = [
-      '#type' => 'item',
-      '#title' => $this->t('Unpublished content warning'),
-      '#markup' => $this->t('If you check Include unpublished content, HearMe may generate public audio files from draft or access-restricted text. You must confirm this separately before queueing.'),
-    ];
-
-    $form['existing_content_queue']['include_unpublished'] = [
-      '#type' => 'checkbox',
-      '#title' => $this->t('Include unpublished content'),
-      '#description' => $this->t('Leave unchecked to queue only published nodes. Check this only when generated audio for unpublished content is safe to expose as public media.'),
-      '#default_value' => $backfillConfirmation['include_unpublished'] ?? FALSE,
-    ];
-
-    $form['existing_content_queue']['confirm_unpublished_public_audio'] = [
-      '#type' => 'checkbox',
-      '#title' => $this->t('I understand unpublished content audio may be publicly accessible'),
-      '#description' => $this->t('Required only when Include unpublished content is checked.'),
-      '#default_value' => $backfillConfirmation['confirm_unpublished_public_audio'] ?? FALSE,
-    ];
 
     $form['existing_content_queue']['requeue_existing'] = [
       '#type' => 'checkbox',
@@ -644,13 +624,10 @@ class HearMeSettingsForm extends ConfigFormBase {
   public function validateQueueExistingContent(array &$form, FormStateInterface $form_state): void {
     $fieldName = (string) $form_state->getValue('tts_audio_field');
     $bundles = array_values(array_filter($form_state->getValue('queue_bundles') ?? []));
-    $options = $form_state->getValue('existing_content_queue') ?? [];
 
     $this->validateExistingContentQueueSelection(
       $fieldName,
       $bundles,
-      !empty($options['include_unpublished']),
-      !empty($options['confirm_unpublished_public_audio']),
       $form_state,
     );
     $this->validateQueueSourceFields($bundles, $form_state);
@@ -665,14 +642,11 @@ class HearMeSettingsForm extends ConfigFormBase {
 
     $fieldName = (string) $confirmation['field_name'];
     $bundles = array_values(array_filter($confirmation['bundles'] ?? []));
-    $includeUnpublished = !empty($confirmation['include_unpublished']);
     $requeueExisting = !empty($confirmation['requeue_existing']);
 
     $this->validateExistingContentQueueSelection(
       $fieldName,
       $bundles,
-      $includeUnpublished,
-      !empty($confirmation['confirm_unpublished_public_audio']),
       $form_state,
     );
     $this->validateQueueSourceFields($bundles, $form_state);
@@ -683,8 +657,6 @@ class HearMeSettingsForm extends ConfigFormBase {
       $fieldName !== (string) $form_state->getValue('tts_audio_field')
       || !$this->sameBundleSelection($bundles, array_values(array_filter($form_state->getValue('queue_bundles') ?? [])))
       || !$this->sameQueueSourceFieldConfig($confirmation['source_fields'] ?? [], $queueSourceFields)
-      || $includeUnpublished !== !empty($options['include_unpublished'])
-      || ($includeUnpublished && !empty($confirmation['confirm_unpublished_public_audio']) !== !empty($options['confirm_unpublished_public_audio']))
       || $requeueExisting !== !empty($options['requeue_existing'])
     ) {
       $form_state->setErrorByName('existing_content_queue', $this->t('The existing content queue settings changed after the estimate was generated. Click Queue existing content again to review the updated estimate.'));
@@ -789,7 +761,7 @@ class HearMeSettingsForm extends ConfigFormBase {
     $fieldName = (string) $form_state->getValue('tts_audio_field');
     $queueBundles = array_values(array_filter($form_state->getValue('queue_bundles') ?? []));
     $options = $form_state->getValue('existing_content_queue') ?? [];
-    $publishedOnly = empty($options['include_unpublished']);
+    $publishedOnly = TRUE;
     $missingOnly = empty($options['requeue_existing']);
     $bundleOptions = $this->getNodeBundleOptions();
     $queueSourceFields = $this->normalizeQueueSourceFieldConfig($form_state->getValue('queue_source_fields') ?? []);
@@ -801,9 +773,7 @@ class HearMeSettingsForm extends ConfigFormBase {
       'source_fields' => $queueSourceFields,
       'published_only' => $publishedOnly,
       'missing_only' => $missingOnly,
-      'include_unpublished' => !$publishedOnly,
       'requeue_existing' => !$missingOnly,
-      'confirm_unpublished_public_audio' => !empty($options['confirm_unpublished_public_audio']),
       'candidate_count' => $this->existingContentQueue->countCandidateNodes($queueBundles, $publishedOnly, $fieldName, FALSE),
     ]);
 
@@ -859,7 +829,7 @@ class HearMeSettingsForm extends ConfigFormBase {
     $fieldName = (string) $confirmation['field_name'];
     $queueBundles = array_values(array_filter($confirmation['bundles'] ?? []));
     $queueSourceFields = $confirmation['source_fields'] ?? [];
-    $publishedOnly = (bool) ($confirmation['published_only'] ?? TRUE);
+    $publishedOnly = TRUE;
     $missingOnly = (bool) ($confirmation['missing_only'] ?? TRUE);
     $providerId = $this->providerResolver->getActiveProviderId();
 
@@ -1063,7 +1033,7 @@ class HearMeSettingsForm extends ConfigFormBase {
             '@bundles' => $bundleLabels ? implode(', ', $bundleLabels) : $this->t('None'),
           ]),
           $this->t('Publication mode: @mode.', [
-            '@mode' => !empty($confirmation['published_only']) ? $this->t('published content only') : $this->t('published and unpublished content'),
+            '@mode' => $this->t('published content only'),
           ]),
           $this->t('Audio field mode: @mode.', [
             '@mode' => !empty($confirmation['missing_only']) ? $this->t('queue only nodes missing audio') : $this->t('requeue nodes even when audio already exists'),
@@ -1225,7 +1195,7 @@ class HearMeSettingsForm extends ConfigFormBase {
     }
   }
 
-  protected function validateExistingContentQueueSelection(string $fieldName, array $bundles, bool $includeUnpublished, bool $confirmUnpublishedPublicAudio, FormStateInterface $form_state): void {
+  protected function validateExistingContentQueueSelection(string $fieldName, array $bundles, FormStateInterface $form_state): void {
     $this->validateAudioFieldName($fieldName, 'tts_audio_field', $form_state);
 
     if (!$bundles) {
@@ -1242,10 +1212,6 @@ class HearMeSettingsForm extends ConfigFormBase {
       $form_state->setErrorByName('existing_content_queue', $this->t('The configured TTS audio field is not compatible with every selected content type: @messages', [
         '@messages' => $this->formatValidationMessages($summary['errors']),
       ]));
-    }
-
-    if ($includeUnpublished && !$confirmUnpublishedPublicAudio) {
-      $form_state->setErrorByName('existing_content_queue][confirm_unpublished_public_audio', $this->t('Confirm that generated audio for unpublished content may be publicly accessible before queueing unpublished content.'));
     }
   }
 

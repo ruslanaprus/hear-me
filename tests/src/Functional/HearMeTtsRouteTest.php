@@ -77,6 +77,25 @@ class HearMeTtsRouteTest extends BrowserTestBase {
     $this->assertSame('no-cache', $response->getHeaderLine('Pragma'));
     $this->assertSame('0', $response->getHeaderLine('Expires'));
     $this->assertSame('nosniff', $response->getHeaderLine('X-Content-Type-Options'));
+
+    unset($request_options['headers']['Content-Type']);
+    $response = $client->post($url, $request_options);
+    $this->assertSame(415, $response->getStatusCode());
+    $this->assertStringContainsString('no-store', $response->getHeaderLine('Cache-Control'));
+
+    $request_options['headers']['Content-Type'] = 'application/json';
+    $request_options['body'] = '{"text":["invalid"]}';
+    $response = $client->post($url, $request_options);
+    $this->assertSame(400, $response->getStatusCode());
+    $this->assertSame('Missing text', (string) $response->getBody());
+
+    $request_options['body'] = json_encode([
+      'text' => str_repeat('a', 33000),
+      'lang' => 'en',
+    ], JSON_THROW_ON_ERROR);
+    $response = $client->post($url, $request_options);
+    $this->assertSame(413, $response->getStatusCode());
+    $this->assertStringContainsString('no-store', $response->getHeaderLine('Cache-Control'));
   }
 
 }

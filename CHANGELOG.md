@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Runtime audio cache metadata table with private/public file storage support.
 - Flood API rate limits and daily/monthly quotas for synthesis requests.
 - Queue worker `hear_me_tts` for cron-based entity audio pre-generation.
+- Deduplicated cleanup queue with cron publication repair for provenance-backed generated Media blocked by temporary lifecycle lock contention.
 - Per-content-type queue source field selection for generated entity audio.
 - Predictable generated-audio node attachment behavior with field validation and documented node save side effects.
 - Settings form action to create the generated audio media reference field on selected content types.
@@ -25,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Admin settings form for provider, cache, rate limit, queue, and request size configuration.
 - Characterization coverage for provider resolution, generated-audio attachment decisions, audio-field provisioning, and the existing-content backfill workflow.
 - Automated PHPStan/`phpstan-drupal`, Composer audit, direct-deprecation, PHP 8.3/8.5, release-fixture, and package-export quality gates.
+- Conservative uninstall validation that preserves persistent Media/File content and requires administrators to remove or migrate HearMe Audio media first.
 
 ### Changed
 
@@ -39,6 +41,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Simplified how HearMe sets up audio fields internally without changing the administrator workflow or existing fields.
 - Organized settings-form construction into private section builders without changing the administrator workflow or submitted form structure.
 - Narrowed the pre-release synthesis coordinator to runtime synthesis, persistent synthesis, and inline cache-source token operations; removed unused URI and raw-byte facades and documented the supported PHP API.
+- Removed the unused provider default-MIME method before publication; synthesis results remain the authoritative MIME source.
+- Queue-generated audio is limited to published nodes and source fields available to anonymous visitors; queue payloads retain only node identity, content hash, and an opaque generation token, publication waits for the node transaction to commit, and attempt-specific reservations fence late workers while workers bound confirmed synthesis failures, retry transient state/Media contention, and validate fresh content under the attachment lock.
+- Generated-audio lifecycle updates honor both generated-replacement and manual-overwrite settings while always retracting generated public audio from ineligible content.
+- Expired or evicted runtime cache entries stop serving immediately, while Files adopted by other Drupal components are preserved and never overwritten during regeneration.
+- Generated-media replacement uses cache provenance instead of public directory names, preserving editor uploads under `public://tts/`.
+- Generated public audio is detached when a node becomes ineligible or is deleted, and provenance-backed Media/File entities are removed only after their last entity reference disappears.
+- The Piper adapter streams bounded, non-empty WAV responses, fails closed on unresolved hostnames, validates and pins the complete resolved endpoint address set through cURL, disables redirects/proxies/connection reuse, blocks metadata infrastructure destinations, and redacts transport failures.
+- Piper language settings preserve exact external voice-registry keys while matching administrator input across case and underscore/hyphen variants.
+- The TTS endpoint now requires a JSON media type, uses a bounded request-body read, and rejects structured values where strings are required.
+- The optional Drush command uses Drush 13.7 attribute discovery and no longer supports queueing unpublished content.
 
 ### Security
 
@@ -46,6 +58,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Anonymous playback is intentionally a restricted permission because synthesis can consume server resources.
 - Module development requires `composer/composer` `^2.10.3`.
 - CI rejects new direct module deprecations while continuing to report indirect Drupal core and dependency deprecations.
+- Pre-release update hooks were removed so the first tagged release starts from one authoritative install schema and configuration baseline.
 
 ### Notes
 

@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Drupal\Tests\hear_me\Kernel;
 
+use Drupal\hear_me\Exception\PersistentSynthesisUnavailableException;
 use Drupal\hear_me\Plugin\TtsProvider\PiperProvider;
 use Drupal\hear_me\Plugin\TtsProvider\TtsProviderManager;
 use Drupal\hear_me\Service\HearMeService;
 use Drupal\hear_me\Service\TtsProviderResolver;
+use Drupal\hear_me\TtsSynthesisResult;
 use Drupal\hear_me_test\Plugin\TtsProvider\TestProvider;
 use Drupal\KernelTests\KernelTestBase;
 use Drupal\media\MediaInterface;
@@ -215,6 +217,96 @@ class HearMeProviderTest extends KernelTestBase {
   }
 
   /**
+   * Tests retention invalidates metadata without deleting in-use files.
+   */
+  public function testRuntimeCacheRetentionPreservesUsedFiles(): void {
+    $cacheManager = $this->container->get('hear_me.cache_manager');
+    $database = $this->container->get('database');
+    $cacheIds = [];
+    $fileIds = [];
+    for ($index = 1; $index <= 3; $index++) {
+      $cid = hash('sha256', 'retention-' . $index);
+      $audio = $cacheManager->saveAudio(
+        $cid,
+        'public://tts/' . $cid . '.wav',
+        'page',
+        'test',
+        'en',
+        'Retention ' . $index,
+        hash('sha256', 'config'),
+        new TtsSynthesisResult('audio-' . $index, 'audio/wav', 'wav'),
+        3600,
+      );
+      $this->assertNotNull($audio->fid);
+      $cacheIds[] = $cid;
+      $fileIds[] = $audio->fid;
+      $database->update('hear_me_audio_cache')
+        ->fields(['last_accessed' => $index])
+        ->condition('cid', $cid)
+        ->execute();
+    }
+    $usedFile = $this->container->get('entity_type.manager')->getStorage('file')->load($fileIds[0]);
+    $this->assertNotNull($usedFile);
+    $this->container->get('file.usage')->add($usedFile, 'system', 'test', 'retention');
+    $this->config('hear_me.settings')->set('cache_max_files', 1)->save();
+
+    $this->assertSame(2, $cacheManager->cleanup());
+    $this->assertSame(['count' => 1, 'bytes' => 7], $cacheManager->getStats());
+    $fileStorage = $this->container->get('entity_type.manager')->getStorage('file');
+    $this->assertNotNull($fileStorage->load($fileIds[0]));
+    $this->assertNull($fileStorage->load($fileIds[1]));
+    $this->assertNotNull($fileStorage->load($fileIds[2]));
+    $this->assertNull($cacheManager->getCachedAudio($cacheIds[0], 3600));
+  }
+
+  /**
+   * Tests expiry invalidates adopted cache files without overwriting them.
+   */
+  public function testExpiredUsedRuntimeCacheIsInvalidated(): void {
+    $cacheManager = $this->container->get('hear_me.cache_manager');
+    $database = $this->container->get('database');
+    $cid = hash('sha256', 'expired-used-runtime-cache');
+    $uri = 'public://tts/' . $cid . '.wav';
+    $audio = $cacheManager->saveAudio(
+      $cid,
+      $uri,
+      'page',
+      'test',
+      'en',
+      'Expired adopted audio',
+      hash('sha256', 'config'),
+      new TtsSynthesisResult('adopted-audio', 'audio/wav', 'wav'),
+      3600,
+    );
+    $usedFile = $this->container->get('entity_type.manager')->getStorage('file')->load($audio->fid);
+    $this->assertNotNull($usedFile);
+    $this->container->get('file.usage')->add($usedFile, 'system', 'test', 'expiry');
+
+    $database->update('hear_me_audio_cache')
+      ->fields(['expires' => 1])
+      ->condition('cid', $cid)
+      ->execute();
+    $this->assertNull($cacheManager->getCachedAudio($cid, 3600));
+    $this->assertSame(['count' => 0, 'bytes' => 0], $cacheManager->getStats());
+    $this->assertNotNull($this->container->get('entity_type.manager')->getStorage('file')->load($audio->fid));
+
+    $replacement = $cacheManager->saveAudio(
+      $cid,
+      $uri,
+      'page',
+      'test',
+      'en',
+      'Replacement retention audio',
+      hash('sha256', 'config'),
+      new TtsSynthesisResult('replacement-audio', 'audio/wav', 'wav'),
+      3600,
+    );
+    $this->assertNotSame($uri, $replacement->uri);
+    $this->assertSame('adopted-audio', file_get_contents($usedFile->getFileUri()));
+    $this->assertSame('replacement-audio', file_get_contents((string) $replacement->uri));
+  }
+
+  /**
    * Tests inline cache tokens authorize only their matching synthesis input.
    */
   public function testInlineCacheTokenSourceVerification(): void {
@@ -284,6 +376,13 @@ class HearMeProviderTest extends KernelTestBase {
     $this->assertSame('unknown', $resolver->getActiveProviderId());
     $this->assertNull($resolver->getProvider('unknown'));
     $this->assertNull($service->getAudio('Characterized text', 'en'));
+    try {
+      $service->synthesize('Characterized text', 'en');
+      $this->fail('Persistent synthesis must distinguish an unavailable provider from a provider failure.');
+    }
+    catch (PersistentSynthesisUnavailableException) {
+      $this->addToAssertionCount(1);
+    }
 
     $this->expectException(\RuntimeException::class);
     $this->expectExceptionMessage(

@@ -37,10 +37,12 @@ audio bytes  ──►  optionally saved as File + cache metadata  ──►  re
 
 - Drupal 11.
 - PHP 8.3 or later.
+- PHP cURL extension for the built-in Piper adapter's validated hostname pinning.
 - Drupal core `file` module: Manages runtime cache and pre-generated audio files.
 - Drupal core `media` module: Stores queue-generated/pre-generated audio as Media entities.
-- Drupal core `language` module (optional): Required for per-node language detection.
-- Drupal core `content_translation` (optional): Required to assign a language to individual nodes.
+- Drupal core `node` module: Provides the content queued for persistent audio generation.
+- Drupal core `language` module (optional): Adds configurable content languages.
+- Drupal core `content_translation` module (optional): Required only when nodes need translated variants.
 - A reachable TTS backend. A Piper-compatible HTTP service is supported by the built-in adapter.
 
 Enable the optional modules only if your site has multilingual content. Without them all nodes default to the site language.
@@ -124,9 +126,9 @@ See [Global settings](docs/installation.md#global-settings) for the full setting
 
 ### Existing Content Backfill
 
-After installing HearMe on a site that already has content, use **Queue existing content** on the settings page to add background audio-generation jobs for configured content types. If Drush is installed, the same backfill is available with `drush hear-me:queue-existing`.
+After installing HearMe on a site that already has content, use **Queue existing content** on the settings page to add background audio-generation jobs for configured content types. With Drush 13.7 or later, the same backfill is available with `drush hear-me:queue-existing`.
 
-HearMe captures the active provider when a backfill starts and uses that identity while constructing and validating jobs. If the active provider changes between Batch API chunks, the backfill stops before queueing the next chunk and asks the administrator to restart it. Queue payloads do not retain a provider ID: jobs queued by completed chunks remain in the queue and use the existing active-provider and stale-item behavior when workers process them.
+HearMe captures the active provider when a backfill starts and uses that identity while constructing and validating jobs. If the active provider changes between Batch API chunks, the backfill stops before queueing the next chunk and asks the administrator to restart it. Queue payloads contain only the node ID, content hash, and an opaque generation token, not source text or a provider ID. Workers reload current public-safe source text before synthesis, skip stale jobs, and discard jobs after three confirmed synthesis failures.
 
 Before backfilling, review **Queue source fields**. Each queued content type can include the node title and any supported stored text fields. Supported field types are plain text, long text, formatted text, and text with summary; text-with-summary fields expose text and summary separately. Paragraphs, entity references, Layout Builder fields, and other complex fields are not offered in this release. Existing installs keep the legacy title plus Body behavior until the settings are saved.
 
@@ -134,7 +136,7 @@ The selected source configuration is part of each queue item's content hash. Cha
 
 By default, regenerated queue audio can replace existing HearMe-generated media so attached audio stays current after content changes. Manually selected or unknown audio is protected by default and is not overwritten unless **Overwrite manually selected audio** is enabled.
 
-Queue-generated entity audio is stored under `public://tts/` as Drupal Media/File entities. The private runtime cache setting applies only to `/hear-me/tts` click-triggered playback, not generated media attached to content. The UI requires explicit confirmation before backfilling unpublished content because generated audio may become publicly reachable by file URL.
+Queue-generated entity audio is stored under `public://tts/` as Drupal Media/File entities. The private runtime cache setting applies only to `/hear-me/tts` click-triggered playback, not generated media attached to content. Only published nodes that anonymous visitors can view are eligible, and only source fields viewable by anonymous visitors are included. When source text changes, a node becomes ineligible, or a node is deleted, HearMe detaches only provenance-backed generated audio and deletes it after its last current entity reference is removed; Media-lock contention records a deduplicated cleanup job, and cron repairs failed queue publication before processing it. Manual or unknown audio is preserved. Historical revisions can retain the old target ID, so regenerate audio after reverting one. Site-specific access modules must return accurate node and field access results.
 
 When a queue worker attaches generated audio, HearMe saves the node to update the configured audio field. That save can update the node changed time and trigger normal Drupal save side effects such as search indexing, cache invalidation, and integrations. HearMe does not intentionally create a new revision and does not change publication or moderation state; Drupal core or contrib workflow modules may still enforce their own revision behaviour during save.
 
@@ -192,7 +194,7 @@ See [Public API](docs/api.md) for the supported integration boundary and [Provid
 
 ### External TTS service
 
-The module requires at least one discovered TTS provider plugin. The built-in **Piper HTTP adapter** connects to an external [Piper-compatible TTS HTTP service](https://github.com/ruslanaprus/piper-tts-service) that accepts `POST /tts` with `{ "text": "...", "lang": "..." }` and returns `audio/wav`. HearMe does not include Piper binaries, voices, containers, or service code; site owners must provide an endpoint reachable from Drupal. The Piper-compatible service has no format selection parameter — WAV is its fixed output format. Other providers are free to return any audio format (MP3, OGG, etc.); the provider interface declares the MIME type and file extension so the module handles caching correctly regardless of format. Any service with a compatible request/response contract works — self-hosted, containerised, or cloud-hosted.
+The module requires at least one discovered TTS provider plugin. The built-in **Piper HTTP adapter** connects to an external [Piper-compatible TTS HTTP service](https://github.com/ruslanaprus/piper-tts-service) that accepts `POST /tts` with `{ "text": "...", "lang": "..." }` and returns `audio/wav`. HearMe does not include Piper binaries, voices, containers, or service code; site owners must provide an endpoint reachable from Drupal. The Piper-compatible service has no format selection parameter — WAV is its fixed output format. Other providers are free to return any audio format (MP3, OGG, etc.); each successful synthesis result declares its MIME type and file extension, while the provider interface declares the default extension used to prepare cache filenames. Any service with a compatible request/response contract works — self-hosted, containerised, or cloud-hosted.
 
 See [Provider system](#provider-system) to connect a different service.
 
@@ -214,9 +216,9 @@ $databases['default']['default'] = [
 
 The `/hear-me/tts` endpoint requires the **Use TTS playback** permission (`use tts playback`) and a valid CSRF request header token.
 
-Runtime responses from `/hear-me/tts` are sent with `Cache-Control: private, no-store, max-age=0, must-revalidate` so browsers and intermediaries do not store click-generated audio responses. Generated media files attached to content use normal Drupal file/media handling and are stored under `public://tts/` by default.
+Runtime responses from `/hear-me/tts` are sent with `Cache-Control: private, no-store, max-age=0, must-revalidate` so browsers and intermediaries do not store click-generated audio responses. The endpoint requires a JSON media type and enforces the configured request and text bounds before synthesis. Generated media files attached to content use normal Drupal file/media handling and are stored under `public://tts/` by default.
 
-Do not queue unpublished, access-restricted, or sensitive content unless the generated audio is safe to expose as a public file.
+HearMe excludes unpublished nodes, nodes anonymous visitors cannot view, and source fields anonymous visitors cannot view from persistent audio generation. Generated audio is detached when an updated node no longer qualifies and is deleted only when no current entity references remain. Review custom access integrations before enabling queue generation.
 
 Grant **Use TTS playback** to Anonymous users only after reviewing rate limits, quotas, provider capacity, and whether generated runtime audio may contain private or user-selected text.
 

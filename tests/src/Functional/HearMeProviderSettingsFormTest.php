@@ -96,9 +96,7 @@ class HearMeProviderSettingsFormTest extends BrowserTestBase {
       'source_fields' => ['article' => ['title' => TRUE, 'fields' => []]],
       'published_only' => TRUE,
       'missing_only' => TRUE,
-      'include_unpublished' => FALSE,
       'requeue_existing' => FALSE,
-      'confirm_unpublished_public_audio' => FALSE,
       'candidate_count' => 0,
     ]);
 

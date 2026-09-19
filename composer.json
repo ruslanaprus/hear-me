@@ -17,6 +17,7 @@
         "piper"
     ],
     "require": {
+        "ext-curl": "*",
         "php": ">=8.3",
         "drupal/core": "^11"
     },

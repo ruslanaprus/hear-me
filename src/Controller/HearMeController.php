@@ -37,7 +37,33 @@ class HearMeController extends ControllerBase {
   }
 
   public function synthesize(Request $request): Response {
-    $validation = $this->inputValidator->validateRequestBody($request->getContent());
+    $requestLimitError = $this->rateLimiter->check('request', TRUE);
+    if ($requestLimitError !== NULL) {
+      return $this->noStoreResponse($requestLimitError, 429);
+    }
+    $this->rateLimiter->register('request', TRUE);
+
+    $contentType = $request->headers->get('Content-Type', '');
+    if (!preg_match('/^application\/(?:[a-z0-9!#$&^_.+-]+\+)?json(?:\s*;|$)/i', $contentType)) {
+      return $this->noStoreResponse('Content-Type must be application/json', 415);
+    }
+
+    $maxRequestBytes = $this->inputValidator->getMaxRequestBytes();
+    $contentLength = $request->headers->get('Content-Length');
+    if (is_numeric($contentLength) && (int) $contentLength > $maxRequestBytes) {
+      return $this->noStoreResponse('Request body too large', 413);
+    }
+
+    $stream = $request->getContent(TRUE);
+    $content = is_resource($stream) ? stream_get_contents($stream, $maxRequestBytes + 1) : FALSE;
+    if (!is_string($content)) {
+      return $this->noStoreResponse('Invalid request body', 400);
+    }
+    if (strlen($content) > $maxRequestBytes) {
+      return $this->noStoreResponse('Request body too large', 413);
+    }
+
+    $validation = $this->inputValidator->validateRequestBody($content);
     if (!$validation->isValid()) {
       return $this->noStoreResponse($validation->errorMessage, 400);
     }

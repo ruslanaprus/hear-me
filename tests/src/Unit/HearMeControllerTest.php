@@ -30,12 +30,15 @@ class HearMeControllerTest extends TestCase {
     $validation = TtsInputValidationResult::valid(
       'Validated text',
       'en',
-      'validated_provider',
+      'request',
       'inline',
       str_repeat('a', 64),
     );
 
     $inputValidator = $this->createMock(HearMeInputValidator::class);
+    $inputValidator->expects($this->once())
+      ->method('getMaxRequestBytes')
+      ->willReturn(HearMeInputValidator::DEFAULT_MAX_REQUEST_BYTES);
     $inputValidator->expects($this->once())
       ->method('validateRequestBody')
       ->with('{"text":"request"}')
@@ -45,42 +48,68 @@ class HearMeControllerTest extends TestCase {
       });
 
     $rateLimiter = $this->createMock(HearMeRateLimiter::class);
-    $rateLimiter->expects($this->once())
+    $rateLimiter->expects($this->exactly(2))
       ->method('check')
-      ->with('validated_provider')
-      ->willReturnCallback(function () use (&$calls): ?string {
-        $calls[] = 'check';
+      ->willReturnCallback(function (string $provider, bool $requestWide = FALSE) use (&$calls): ?string {
+        $calls[] = 'check:' . ($requestWide ? 'request-wide:' : 'provider:') . $provider;
         return NULL;
       });
-    $rateLimiter->expects($this->once())
+    $rateLimiter->expects($this->exactly(2))
       ->method('register')
-      ->with('validated_provider')
-      ->willReturnCallback(function () use (&$calls): void {
-        $calls[] = 'register';
+      ->willReturnCallback(function (string $provider, bool $requestWide = FALSE) use (&$calls): void {
+        $calls[] = 'register:' . ($requestWide ? 'request-wide:' : 'provider:') . $provider;
       });
 
     $ttsService = $this->createMock(HearMeService::class);
     $ttsService->expects($this->once())
       ->method('getTrustedRuntimeSource')
-      ->with('Validated text', 'en', 'inline', str_repeat('a', 64), 'validated_provider')
+      ->with('Validated text', 'en', 'inline', str_repeat('a', 64), 'request')
       ->willReturnCallback(function () use (&$calls): string {
         $calls[] = 'token';
         return 'inline';
       });
     $ttsService->expects($this->once())
       ->method('getAudio')
-      ->with('Validated text', 'en', 'inline', 'validated_provider')
+      ->with('Validated text', 'en', 'inline', 'request')
       ->willReturnCallback(function () use (&$calls): TtsAudioResult {
         $calls[] = 'synthesize';
         return new TtsAudioResult('audio', 'audio/wav', 'wav');
       });
 
     $controller = new HearMeController($ttsService, $inputValidator, $rateLimiter);
-    $response = $controller->synthesize(Request::create('/hear-me/tts', 'POST', content: '{"text":"request"}'));
+    $request = Request::create('/hear-me/tts', 'POST', content: '{"text":"request"}');
+    $request->headers->set('Content-Type', 'application/json');
+    $response = $controller->synthesize($request);
 
-    $this->assertSame(['validate', 'check', 'register', 'token', 'synthesize'], $calls);
+    $this->assertSame([
+      'check:request-wide:request',
+      'register:request-wide:request',
+      'validate',
+      'check:provider:request',
+      'register:provider:request',
+      'token',
+      'synthesize',
+    ], $calls);
     $this->assertSame(200, $response->getStatusCode());
     $this->assertSame('audio', $response->getContent());
+  }
+
+  /**
+   * Tests that unsupported media types are rejected before body parsing.
+   */
+  public function testRejectsNonJsonContentType(): void {
+    $inputValidator = $this->createMock(HearMeInputValidator::class);
+    $inputValidator->expects($this->never())->method('validateRequestBody');
+    $controller = new HearMeController(
+      $this->createMock(HearMeService::class),
+      $inputValidator,
+      $this->createMock(HearMeRateLimiter::class),
+    );
+
+    $response = $controller->synthesize(Request::create('/hear-me/tts', 'POST', content: '{}'));
+
+    $this->assertSame(415, $response->getStatusCode());
+    $this->assertStringContainsString('no-store', $response->headers->get('Cache-Control'));
   }
 
 }

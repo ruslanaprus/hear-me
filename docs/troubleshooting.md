@@ -112,7 +112,7 @@ The backfill action only scans content types selected under **Queue TTS pre-gene
 
 If a backfill reports fewer queued jobs than scanned nodes, check the skipped counts. Re-running backfill before cron processes existing jobs skips nodes whose current content hash already has an identical pending queue job.
 
-Use **Create HearMe audio field** first, review **Queue source fields**, then run **Queue existing content** again. Only stored plain text, long text, formatted text, and text-with-summary fields are offered as source fields. If you use an existing audio field, confirm that it is an entity reference to media and allows the `hear_me_audio` bundle. With Drush installed, use `drush hear-me:queue-existing --requeue-existing` when existing attached audio should be regenerated.
+Use **Create HearMe audio field** first, review **Queue source fields**, then run **Queue existing content** again. Only stored plain text, long text, formatted text, and text-with-summary fields are offered as source fields. If you use an existing audio field, confirm that it is an entity reference to media and allows the `hear_me_audio` bundle. With Drush 13.7 or later, use `drush hear-me:queue-existing --requeue-existing` when existing attached audio should be regenerated.
 
 When a queued job succeeds, HearMe saves the node to attach the generated Media entity. If you see changed timestamps, search indexing, cache invalidation, or integration hooks firing after queue processing, that is expected. HearMe does not intentionally create a revision or change `moderation_state`, but moderation/workflow modules can enforce their own revision behaviour.
 
@@ -122,7 +122,7 @@ Runtime files are private by default, but can be public if **Runtime cache file 
 
 Queue-generated entity audio uses `public://tts/` because it is intended to be attached as Media/File entities. Review site access requirements before exposing generated media.
 
-If unpublished or access-restricted content was queued, generated audio files may still be reachable by public file URL. Remove the generated media/files or regenerate only published public-safe content.
+HearMe queues only published nodes that anonymous visitors can view and includes only source fields viewable by anonymous visitors. On later node updates or deletion, HearMe detaches provenance-backed generated audio that is stale or no longer eligible and deletes its Media/File entities after their last current entity reference is removed. Historical revisions can retain an old generated-media target ID, and audio should be regenerated after reverting one. Manual or unknown audio is preserved. If a custom access module reports access incorrectly, disable queue generation until its node and field access integration is corrected.
 
 ## Uninstall Is Blocked
 
@@ -132,6 +132,8 @@ Common blockers:
 
 - The **TTS Playback Button** filter is enabled on a text format.
 - A block placement config still references the HearMe block.
+- HearMe Audio media still exists and must be removed or migrated first.
+- Another Media type reuses the module-owned `field_hear_me_audio_file` storage.
 
 Disable the filter or remove dependent config through the UI, then retry uninstall.
 
@@ -139,11 +141,6 @@ Disable the filter or remove dependent config through the UI, then retry uninsta
 
 Use **Clear generated runtime audio cache** on the HearMe settings form to clear tracked runtime playback files.
 
-On uninstall, HearMe removes tracked generated audio under:
-
-- `private://hear_me/tts/`
-- `public://tts/`
-
-It skips managed File entities outside those module-owned directories and files still used elsewhere.
+Uninstall clears tracked runtime playback cache files and pending queue/state records. It does not delete persistent Media or File entities and is blocked until HearMe Audio media has been removed or migrated. The separate normal content lifecycle cleanup applies only to provenance-backed generated audio that no entity references any longer.
 
 Node fields created through **Audio field setup** are not deleted automatically. Remove those fields manually if you no longer need them after uninstall.

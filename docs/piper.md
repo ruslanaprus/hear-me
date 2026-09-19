@@ -55,7 +55,7 @@ Piper-compatible adapter settings:
 - **Supported Language Codes**: comma-separated list of voice-registry keys the service can handle, for example, `en, uk_UA`. Case, underscores, and hyphens are preserved when sent to Piper, so each value must exactly match the external service's registry key.
 - **Default Language**: fallback voice-registry key used when no language can be resolved from the page context. Case and separator differences are accepted in the form, then saved using the matching Supported Language Codes value.
 
-The endpoint URL must use HTTP or HTTPS, include a host, and must not contain usernames, passwords, or URL fragments. Hostnames must resolve successfully. Immediately before each request, HearMe validates every resolved address and pins the connection to one validated address. Redirects, proxies, and connection reuse are disabled for this request. Loopback, private, multicast, and reserved destinations require **Allow local/private provider endpoints**; link-local and known metadata/infrastructure ranges remain blocked. Network egress rules remain necessary defense in depth for custom HTTP transports and infrastructure ranges not known to the adapter.
+The endpoint URL must use HTTP or HTTPS, include a host, and must not contain usernames, passwords, or URL fragments. Hostnames must resolve successfully. The pre-release adapter validates every resolved address and requests cURL hostname pinning, redirect/proxy prohibition, and connection non-reuse. Its current streamed Guzzle path does not apply those cURL-only controls, so effective transport pinning is a release blocker rather than a protection administrators should rely on yet. Network egress rules remain necessary defense in depth.
 
 If authentication is required, put Piper behind an internal proxy and implement authentication there, or create a custom provider that sends the required headers securely.
 
@@ -107,7 +107,7 @@ curl -X POST https://tts.example.com/tts \
 
 Do not expose an unauthenticated Piper service directly to the public internet. Keep it on a private network or behind an authenticating reverse proxy.
 
-Drupal sends server-side HTTP requests to the configured endpoint. To reduce SSRF risk, the built-in adapter fails closed on unresolved hostnames, validates every resolved address, pins hostname connections through cURL, disables redirects, proxies, and connection reuse, blocks metadata/link-local infrastructure destinations, blocks other private/local destinations by default, redacts endpoint paths and query data from logs, and accepts only bounded, non-empty `audio/wav` responses. Replacing Drupal's cURL-backed HTTP transport with one that ignores raw cURL options is unsupported for this adapter.
+Drupal sends server-side HTTP requests to the configured endpoint. The pre-release adapter fails closed on unresolved hostnames, validates every resolved address, blocks metadata/link-local infrastructure destinations, blocks other private/local destinations by default, redacts endpoint paths and query data from logs, and bounds the body it reads as `audio/wav`. DNS pinning, redirect/proxy/connection controls on Drupal's actual transport, and RIFF/WAVE validation must pass D10.8 before release. Until then, use network egress controls and do not treat the adapter as production-ready SSRF isolation.
 
 Even when Piper is private, the Drupal `/hear-me/tts` endpoint can expose resource consumption to site users. Use HearMe permissions, rate limits, quotas, and cache retention settings appropriately.
 

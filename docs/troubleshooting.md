@@ -112,7 +112,7 @@ The backfill action only scans content types selected under **Queue TTS pre-gene
 
 If a backfill reports fewer queued jobs than scanned nodes, check the skipped counts. Re-running backfill before cron processes existing jobs skips nodes whose current content hash already has an identical pending queue job.
 
-Use **Create HearMe audio field** first, review **Queue source fields**, then run **Queue existing content** again. Only stored plain text, long text, formatted text, and text-with-summary fields are offered as source fields. If you use an existing audio field, confirm that it is an entity reference to media and allows the `hear_me_audio` bundle. With Drush 13.7 or later, use `drush hear-me:queue-existing --requeue-existing` when existing attached audio should be regenerated.
+Use **Create HearMe audio field** first, review **Queue source fields**, then run **Queue existing content** again. The pre-release candidate offers stored plain text, long text, formatted text, and text-with-summary fields; D10.4 blocks release until formatted values pass through Drupal text filters. If you use an existing audio field, confirm that it is an entity reference to media and allows the `hear_me_audio` bundle. The optional `drush hear-me:queue-existing --requeue-existing` command targets Drush 13.7 or later, but minimum-version discovery and execution remain a pre-release verification blocker.
 
 When a queued job succeeds, HearMe saves the node to attach the generated Media entity. If you see changed timestamps, search indexing, cache invalidation, or integration hooks firing after queue processing, that is expected. HearMe does not intentionally create a revision or change `moderation_state`, but moderation/workflow modules can enforce their own revision behaviour.
 
@@ -122,7 +122,7 @@ Runtime files are private by default, but can be public if **Runtime cache file 
 
 Queue-generated entity audio uses `public://tts/` because it is intended to be attached as Media/File entities. Review site access requirements before exposing generated media.
 
-HearMe queues only published nodes that anonymous visitors can view and includes only source fields viewable by anonymous visitors. On later node updates or deletion, HearMe detaches provenance-backed generated audio that is stale or no longer eligible and deletes its Media/File entities after their last current entity reference is removed. Historical revisions can retain an old generated-media target ID, and audio should be regenerated after reverting one. Manual or unknown audio is preserved. If a custom access module reports access incorrectly, disable queue generation until its node and field access integration is corrected.
+HearMe queues only published nodes that anonymous visitors can view and includes only source fields viewable by anonymous visitors. The current pre-release path can detach stale/ineligible provenance-backed audio but checks only current entity references before deletion. D10.5-D10.7 block release until transient failures cannot trigger retraction, retained revisions are protected, and grant-only access changes can be reconciled. Manual or unknown audio is preserved. If a custom access module reports access incorrectly, disable queue generation until its node and field access integration is corrected.
 
 ## Uninstall Is Blocked
 
@@ -143,4 +143,4 @@ Use **Clear generated runtime audio cache** on the HearMe settings form to clear
 
 Uninstall clears tracked runtime playback cache files and pending queue/state records. It does not delete persistent Media or File entities and is blocked until HearMe Audio media has been removed or migrated. The separate normal content lifecycle cleanup applies only to provenance-backed generated audio that no entity references any longer.
 
-Node fields created through **Audio field setup** are not deleted automatically. Remove those fields manually if you no longer need them after uninstall.
+Node fields created through **Audio field setup** are site-owned. Before uninstall, migrate or explicitly delete every such field that still targets the HearMe Audio Media bundle. D10.9 must make the uninstall validator name those fields and block uninstall rather than allowing Drupal dependency removal to delete or broaden them implicitly.

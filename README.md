@@ -37,7 +37,7 @@ audio bytes  ──►  optionally saved as File + cache metadata  ──►  re
 
 - Drupal 11.
 - PHP 8.3 or later.
-- PHP cURL extension for the built-in Piper adapter's validated hostname pinning.
+- PHP cURL extension for the built-in Piper adapter. Effective hostname pinning on Drupal's actual HTTP transport remains a pre-release blocker.
 - Drupal core `file` module: Manages runtime cache and pre-generated audio files.
 - Drupal core `media` module: Stores queue-generated/pre-generated audio as Media entities.
 - Drupal core `node` module: Provides the content queued for persistent audio generation.
@@ -126,17 +126,17 @@ See [Global settings](docs/installation.md#global-settings) for the full setting
 
 ### Existing Content Backfill
 
-After installing HearMe on a site that already has content, use **Queue existing content** on the settings page to add background audio-generation jobs for configured content types. With Drush 13.7 or later, the same backfill is available with `drush hear-me:queue-existing`.
+After installing HearMe on a site that already has content, use **Queue existing content** on the settings page to add background audio-generation jobs for configured content types. The optional `drush hear-me:queue-existing` command targets Drush 13.7 or later, but minimum-version discovery and execution remain a pre-release verification blocker.
 
 HearMe captures the active provider when a backfill starts and uses that identity while constructing and validating jobs. If the active provider changes between Batch API chunks, the backfill stops before queueing the next chunk and asks the administrator to restart it. Queue payloads contain only the node ID, content hash, and an opaque generation token, not source text or a provider ID. Workers reload current public-safe source text before synthesis, skip stale jobs, and discard jobs after three confirmed synthesis failures.
 
-Before backfilling, review **Queue source fields**. Each queued content type can include the node title and any supported stored text fields. Supported field types are plain text, long text, formatted text, and text with summary; text-with-summary fields expose text and summary separately. Paragraphs, entity references, Layout Builder fields, and other complex fields are not offered in this release. Existing installs keep the legacy title plus Body behavior until the settings are saved.
+Before backfilling, review **Queue source fields**. Each queued content type can include the node title and any supported stored text fields. The pre-release candidate offers plain text, long text, formatted text, and text with summary; text-with-summary fields expose text and summary separately. D10.4 blocks release until formatted values are processed through Drupal text filters rather than raw storage. Paragraphs, entity references, Layout Builder fields, and other complex fields are not offered in the first release. Existing installs keep the legacy title plus Body behavior until the settings are saved.
 
 The selected source configuration is part of each queue item's content hash. Changing source fields causes newly queued jobs to use a new hash, and stale pending jobs are skipped before they can overwrite newer audio.
 
 By default, regenerated queue audio can replace existing HearMe-generated media so attached audio stays current after content changes. Manually selected or unknown audio is protected by default and is not overwritten unless **Overwrite manually selected audio** is enabled.
 
-Queue-generated entity audio is stored under `public://tts/` as Drupal Media/File entities. The private runtime cache setting applies only to `/hear-me/tts` click-triggered playback, not generated media attached to content. Only published nodes that anonymous visitors can view are eligible, and only source fields viewable by anonymous visitors are included. When source text changes, a node becomes ineligible, or a node is deleted, HearMe detaches only provenance-backed generated audio and deletes it after its last current entity reference is removed; Media-lock contention records a deduplicated cleanup job, and cron repairs failed queue publication before processing it. Manual or unknown audio is preserved. Historical revisions can retain the old target ID, so regenerate audio after reverting one. Site-specific access modules must return accurate node and field access results.
+Queue-generated entity audio is stored under `public://tts/` as Drupal Media/File entities. The private runtime cache setting applies only to `/hear-me/tts` click-triggered playback, not generated media attached to content. Only published nodes that anonymous visitors can view are eligible, and only source fields viewable by anonymous visitors are included. The current pre-release path detaches provenance-backed audio after source/access changes and checks only current entity references before deletion. D10.5-D10.7 block release until provenance, retained-revision cleanup, and grant-only access reconciliation are fail-closed. Manual or unknown audio is preserved. Site-specific access modules must return accurate node and field access results.
 
 When a queue worker attaches generated audio, HearMe saves the node to update the configured audio field. That save can update the node changed time and trigger normal Drupal save side effects such as search indexing, cache invalidation, and integrations. HearMe does not intentionally create a new revision and does not change publication or moderation state; Drupal core or contrib workflow modules may still enforce their own revision behaviour during save.
 

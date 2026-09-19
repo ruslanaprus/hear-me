@@ -30,6 +30,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Reviewed and froze the intended first-release queue, generated-Media, Piper security, uninstall, and optional Drush contracts; unresolved release blockers are documented for separate verification gates.
+
 - Lifecycle hooks live in `hear_me.install` for Drupal install/uninstall discovery.
 - Queue worker lives under `Plugin\QueueWorker` for Drupal queue worker discovery.
 - Runtime playback cache defaults to private files.
@@ -42,15 +44,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Organized settings-form construction into private section builders without changing the administrator workflow or submitted form structure.
 - Narrowed the pre-release synthesis coordinator to runtime synthesis, persistent synthesis, and inline cache-source token operations; removed unused URI and raw-byte facades and documented the supported PHP API.
 - Removed the unused provider default-MIME method before publication; synthesis results remain the authoritative MIME source.
-- Queue-generated audio is limited to published nodes and source fields available to anonymous visitors; queue payloads retain only node identity, content hash, and an opaque generation token, publication waits for the node transaction to commit, and attempt-specific reservations fence late workers while workers bound confirmed synthesis failures, retry transient state/Media contention, and validate fresh content under the attachment lock.
+- Queue-generated audio is limited to published nodes and source fields available to anonymous visitors; queue payloads retain only node identity, content hash, and an opaque generation token, and lifecycle publication waits for the node transaction to commit. The D10.1 review retained bounded synthesis retries and fresh-content validation but requires simpler ownership and publication recovery before release.
 - Generated-audio lifecycle updates honor both generated-replacement and manual-overwrite settings while always retracting generated public audio from ineligible content.
 - Expired or evicted runtime cache entries stop serving immediately, while Files adopted by other Drupal components are preserved and never overwritten during regeneration.
 - Generated-media replacement uses cache provenance instead of public directory names, preserving editor uploads under `public://tts/`.
-- Generated public audio is detached when a node becomes ineligible or is deleted, and provenance-backed Media/File entities are removed only after their last entity reference disappears.
-- The Piper adapter streams bounded, non-empty WAV responses, fails closed on unresolved hostnames, validates and pins the complete resolved endpoint address set through cURL, disables redirects/proxies/connection reuse, blocks metadata infrastructure destinations, and redacts transport failures.
-- Piper language settings preserve exact external voice-registry keys while matching administrator input across case and underscore/hyphen variants.
+- Generated public audio is detached when a node becomes ineligible or is deleted. The D10.1 review blocks release until provenance is fail-closed and Media/File deletion checks retained revisions as well as current references.
+- The Piper adapter bounds non-empty `audio/wav` reads, fails closed on unresolved hostnames, validates resolved endpoint addresses, blocks metadata infrastructure destinations, and redacts transport failures. The D10.1 review found that effective cURL pinning and response validation still require D10.8 correction and integration testing.
+- Piper language settings preserve exact external voice-registry keys while matching administrator input across case and underscore/hyphen variants; D10.8 must remove the pre-release language-tag-shaped restriction and verify bounded opaque registry keys.
 - The TTS endpoint now requires a JSON media type, uses a bounded request-body read, and rejects structured values where strings are required.
-- The optional Drush command uses Drush 13.7 attribute discovery and no longer supports queueing unpublished content.
+- The optional Drush command uses attribute discovery and no longer supports queueing unpublished content; Drush 13.7 minimum-version discovery and execution remain a pre-release verification blocker.
 
 ### Security
 

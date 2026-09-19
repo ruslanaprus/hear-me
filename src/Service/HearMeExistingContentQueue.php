@@ -318,14 +318,14 @@ class HearMeExistingContentQueue {
       return $stats;
     }
 
-    $queueItem = $this->nodeAudioQueue->buildQueueItem($node, $providerId);
-    if ($queueItem === NULL) {
-      $stats['skipped_source_empty']++;
+    if ($this->nodeAudioQueue->resolveSupportedNodeLanguage($node, $providerId) === NULL) {
+      $stats['skipped_unsupported_language']++;
       return $stats;
     }
 
-    if (!$this->isSupportedLanguage((string) $queueItem['lang'], $providerId)) {
-      $stats['skipped_unsupported_language']++;
+    $queueItem = $this->nodeAudioQueue->buildQueueItem($node, $providerId);
+    if ($queueItem === NULL) {
+      $stats['skipped_source_empty']++;
       return $stats;
     }
 
@@ -337,14 +337,6 @@ class HearMeExistingContentQueue {
     }
 
     return $stats;
-  }
-
-  /**
-   * Checks provider language support.
-   */
-  protected function isSupportedLanguage(string $lang, string $providerId): bool {
-    $supported = array_map('strtolower', $this->providerResolver->getSupportedLanguages($providerId));
-    return in_array(strtolower($lang), $supported, TRUE);
   }
 
   /**

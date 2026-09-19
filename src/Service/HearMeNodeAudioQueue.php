@@ -3,14 +3,20 @@
 namespace Drupal\hear_me\Service;
 
 use Drupal\Component\Utility\Html;
+use Drupal\Component\Datetime\TimeInterface;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Entity\EntityInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Language\LanguageInterface;
+use Drupal\Core\KeyValueStore\KeyValueFactoryInterface;
+use Drupal\Core\KeyValueStore\KeyValueStoreInterface;
+use Drupal\Core\Lock\LockAcquiringException;
 use Drupal\Core\Lock\LockBackendInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\Core\Queue\QueueFactory;
+use Drupal\Core\Session\AnonymousUserSession;
 use Drupal\Core\State\StateInterface;
+use Drupal\node\NodeInterface;
 
 /**
  * Builds and validates queue items for node audio pre-generation.
@@ -29,18 +35,30 @@ class HearMeNodeAudioQueue {
 
   protected const SOURCE_CONFIG_VERSION = 'v1';
 
+  private const QUEUED_MARKER_TTL = 86400;
+
+  private const SYNTHESIS_RESERVATION_TTL = 60;
+
+  public const MAX_SYNTHESIS_ATTEMPTS = 3;
+
   protected \Psr\Log\LoggerInterface $logger;
+
+  protected KeyValueStoreInterface $stateStore;
 
   public function __construct(
     protected ConfigFactoryInterface $configFactory,
     protected TtsProviderResolver $providerResolver,
+    protected HearMeInputValidator $inputValidator,
     protected EntityTypeManagerInterface $entityTypeManager,
     protected QueueFactory $queueFactory,
     protected StateInterface $state,
+    KeyValueFactoryInterface $keyValueFactory,
     protected LockBackendInterface $lock,
+    protected TimeInterface $time,
     LoggerChannelFactoryInterface $loggerFactory,
   ) {
     $this->logger = $loggerFactory->get('hear_me');
+    $this->stateStore = $keyValueFactory->get('state');
   }
 
   /**
@@ -61,8 +79,13 @@ class HearMeNodeAudioQueue {
   public function queueItem(array $queueItem): bool {
     $stateKey = $this->getQueuedHashStateKey($queueItem);
     if ($stateKey === NULL) {
-      return $this->queueFactory->get('hear_me_tts')->createItem($queueItem) !== FALSE;
+      return FALSE;
     }
+    $storedItem = [
+      'nid' => (int) ($queueItem['nid'] ?? 0),
+      'content_hash' => (string) ($queueItem['content_hash'] ?? ''),
+      'token' => bin2hex(random_bytes(16)),
+    ];
 
     $lockName = 'hear_me.queue_hash.' . hash('sha256', $stateKey);
     if (!$this->lock->acquire($lockName, 30.0)) {
@@ -70,14 +93,28 @@ class HearMeNodeAudioQueue {
     }
 
     try {
-      if ($this->state->get($stateKey, FALSE)) {
+      $marker = $this->stateStore->get($stateKey, FALSE);
+      if (is_array($marker) && (int) ($marker['queued_at'] ?? 0) > $this->time->getRequestTime() - self::QUEUED_MARKER_TTL) {
         return FALSE;
       }
 
-      if ($this->queueFactory->get('hear_me_tts')->createItem($queueItem) === FALSE) {
-        return FALSE;
+      $this->state->set($stateKey, [
+        'attempt_started_at' => 0,
+        'attempt_token' => '',
+        'attempts' => 0,
+        'queued_at' => $this->time->getRequestTime(),
+        'token' => $storedItem['token'],
+      ]);
+      try {
+        if ($this->queueFactory->get('hear_me_tts')->createItem($storedItem) === FALSE) {
+          $this->clearReservationIfOwned($stateKey, $storedItem['token']);
+          return FALSE;
+        }
       }
-      $this->state->set($stateKey, TRUE);
+      catch (\Throwable $e) {
+        $this->clearReservationIfOwned($stateKey, $storedItem['token']);
+        throw $e;
+      }
     }
     finally {
       $this->lock->release($lockName);
@@ -89,9 +126,201 @@ class HearMeNodeAudioQueue {
   /**
    * Clears the pending marker for a processed or discarded queue item.
    */
-  public function clearQueuedHash(int $nid, string $contentHash): void {
+  public function clearQueuedHash(int $nid, string $contentHash, string $token, ?string $attemptToken = NULL): void {
     $stateKey = $this->buildQueuedHashStateKey($nid, $contentHash);
-    if ($stateKey !== NULL) {
+    if ($stateKey === NULL || $token === '') {
+      return;
+    }
+
+    $lockName = 'hear_me.queue_hash.' . hash('sha256', $stateKey);
+    if (!$this->lock->acquire($lockName, 30.0)) {
+      throw new LockAcquiringException('HearMe queue state is busy.');
+    }
+
+    try {
+      $this->clearReservationIfOwned($stateKey, $token, $attemptToken);
+    }
+    finally {
+      $this->lock->release($lockName);
+    }
+  }
+
+  /**
+   * Checks whether a token still owns the active marker for a queued hash.
+   */
+  public function isCurrentQueueItem(int $nid, string $contentHash, string $token): bool {
+    $stateKey = $this->buildQueuedHashStateKey($nid, $contentHash);
+    if ($stateKey === NULL || $token === '') {
+      return FALSE;
+    }
+
+    $marker = $this->stateStore->get($stateKey, []);
+    return is_array($marker) && hash_equals((string) ($marker['token'] ?? ''), $token);
+  }
+
+  /**
+   * Reserves one synthesis attempt for the current queue item.
+   *
+   * @return string|null
+   *   An attempt-specific token, an empty string for a stale or exhausted item,
+   *   or NULL when lock contention requires a delayed retry.
+   */
+  public function reserveSynthesisAttempt(int $nid, string $contentHash, string $token): ?string {
+    $stateKey = $this->buildQueuedHashStateKey($nid, $contentHash);
+    if ($stateKey === NULL || $token === '') {
+      return '';
+    }
+
+    $lockName = 'hear_me.queue_hash.' . hash('sha256', $stateKey);
+    if (!$this->lock->acquire($lockName, 30.0)) {
+      return NULL;
+    }
+
+    try {
+      $value = $this->stateStore->get($stateKey, []);
+      if (!is_array($value) || !hash_equals((string) ($value['token'] ?? ''), $token)) {
+        return '';
+      }
+      $attempts = (int) ($value['attempts'] ?? 0);
+      if ($attempts >= self::MAX_SYNTHESIS_ATTEMPTS) {
+        $this->state->delete($stateKey);
+        return '';
+      }
+      $now = $this->time->getCurrentTime();
+      if ((int) ($value['attempt_started_at'] ?? 0) > $now - self::SYNTHESIS_RESERVATION_TTL) {
+        return NULL;
+      }
+      $attemptToken = bin2hex(random_bytes(16));
+      $this->state->set($stateKey, [
+        'attempt_started_at' => $now,
+        'attempt_token' => $attemptToken,
+        'attempts' => $attempts,
+        'queued_at' => (int) ($value['queued_at'] ?? $this->time->getRequestTime()),
+        'token' => $token,
+      ]);
+      return $attemptToken;
+    }
+    finally {
+      $this->lock->release($lockName);
+    }
+  }
+
+  /**
+   * Records one failed reserved synthesis attempt.
+   *
+   * @return int|null
+   *   The failure count, zero for a stale item, or NULL on lock contention.
+   */
+  public function recordSynthesisFailure(int $nid, string $contentHash, string $token, string $attemptToken): ?int {
+    $stateKey = $this->buildQueuedHashStateKey($nid, $contentHash);
+    if ($stateKey === NULL || $token === '') {
+      return 0;
+    }
+
+    $lockName = 'hear_me.queue_hash.' . hash('sha256', $stateKey);
+    if (!$this->lock->acquire($lockName, 30.0)) {
+      return NULL;
+    }
+
+    try {
+      $value = $this->stateStore->get($stateKey, []);
+      if (!is_array($value)
+        || !hash_equals((string) ($value['token'] ?? ''), $token)
+        || !hash_equals((string) ($value['attempt_token'] ?? ''), $attemptToken)) {
+        return 0;
+      }
+      if ((int) ($value['attempt_started_at'] ?? 0) <= 0) {
+        return 0;
+      }
+      $attempts = (int) ($value['attempts'] ?? 0) + 1;
+      if ($attempts >= self::MAX_SYNTHESIS_ATTEMPTS) {
+        $this->state->delete($stateKey);
+        return $attempts;
+      }
+      $value['attempt_started_at'] = 0;
+      $value['attempt_token'] = '';
+      $value['attempts'] = $attempts;
+      $this->state->set($stateKey, $value);
+      return $attempts;
+    }
+    finally {
+      $this->lock->release($lockName);
+    }
+  }
+
+  /**
+   * Completes a successful synthesis reservation for the current item.
+   */
+  public function completeSynthesisAttempt(int $nid, string $contentHash, string $token, string $attemptToken): bool {
+    $stateKey = $this->buildQueuedHashStateKey($nid, $contentHash);
+    if ($stateKey === NULL || $token === '') {
+      return FALSE;
+    }
+
+    $lockName = 'hear_me.queue_hash.' . hash('sha256', $stateKey);
+    if (!$this->lock->acquire($lockName, 30.0)) {
+      throw new LockAcquiringException('HearMe synthesis attempt state is busy.');
+    }
+
+    try {
+      $value = $this->stateStore->get($stateKey, []);
+      if (!is_array($value)
+        || !hash_equals((string) ($value['token'] ?? ''), $token)
+        || !hash_equals((string) ($value['attempt_token'] ?? ''), $attemptToken)) {
+        return FALSE;
+      }
+      $value['attempt_started_at'] = 0;
+      $value['attempt_token'] = '';
+      $this->state->set($stateKey, $value);
+      return TRUE;
+    }
+    finally {
+      $this->lock->release($lockName);
+    }
+  }
+
+  /**
+   * Refreshes a reservation immediately before its persistent side effect.
+   *
+   * @return bool|null
+   *   TRUE when the attempt still owns the marker, FALSE when stale, or NULL
+   *   when lock contention requires a delayed retry.
+   */
+  public function refreshSynthesisAttempt(int $nid, string $contentHash, string $token, string $attemptToken): ?bool {
+    $stateKey = $this->buildQueuedHashStateKey($nid, $contentHash);
+    if ($stateKey === NULL || $token === '' || $attemptToken === '') {
+      return FALSE;
+    }
+
+    $lockName = 'hear_me.queue_hash.' . hash('sha256', $stateKey);
+    if (!$this->lock->acquire($lockName, 30.0)) {
+      return NULL;
+    }
+
+    try {
+      $value = $this->stateStore->get($stateKey, []);
+      if (!is_array($value)
+        || !hash_equals((string) ($value['token'] ?? ''), $token)
+        || !hash_equals((string) ($value['attempt_token'] ?? ''), $attemptToken)) {
+        return FALSE;
+      }
+      $value['attempt_started_at'] = $this->time->getCurrentTime();
+      $this->state->set($stateKey, $value);
+      return TRUE;
+    }
+    finally {
+      $this->lock->release($lockName);
+    }
+  }
+
+  /**
+   * Removes a queue reservation only while its token still owns the marker.
+   */
+  private function clearReservationIfOwned(string $stateKey, string $token, ?string $attemptToken = NULL): void {
+    $marker = $this->stateStore->get($stateKey, []);
+    if (is_array($marker)
+      && hash_equals((string) ($marker['token'] ?? ''), $token)
+      && ($attemptToken === NULL || hash_equals((string) ($marker['attempt_token'] ?? ''), $attemptToken))) {
       $this->state->delete($stateKey);
     }
   }
@@ -121,7 +350,7 @@ class HearMeNodeAudioQueue {
    * Builds a queue item for a node enrolled in TTS pre-generation.
    */
   public function buildQueueItem(EntityInterface $entity, ?string $providerId = NULL): ?array {
-    if (!$this->isNodeQueuedForAudio($entity)) {
+    if (!$this->isEligibleForPersistentAudio($entity)) {
       return NULL;
     }
 
@@ -140,7 +369,10 @@ class HearMeNodeAudioQueue {
    */
   public function buildCurrentQueueItem(int $nid, ?string $providerId = NULL): ?array {
     try {
-      $node = $this->entityTypeManager->getStorage('node')->load($nid);
+      $nodeStorage = $this->entityTypeManager->getStorage('node');
+      $nodeStorage->resetCache([$nid]);
+      $this->entityTypeManager->getAccessControlHandler('node')->resetCache();
+      $node = $nodeStorage->load($nid);
     }
     catch (\Exception $e) {
       $this->logger->warning('HearMe: could not load node @nid for queued audio generation: @msg', [
@@ -154,10 +386,20 @@ class HearMeNodeAudioQueue {
   }
 
   /**
+   * Resolves a node's synthesis language against one provider's capabilities.
+   */
+  public function resolveSupportedNodeLanguage(EntityInterface $entity, string $providerId): ?string {
+    return $this->inputValidator->resolveSupportedLanguage(
+      $this->resolveNodeLanguage($entity, $providerId),
+      $providerId,
+    );
+  }
+
+  /**
    * Checks whether the configured source text or language changed.
    */
   public function hasAudioSourceChanged(EntityInterface $entity): bool {
-    if (!$this->isNodeQueuedForAudio($entity)) {
+    if (!$entity instanceof NodeInterface || !$entity->id()) {
       return FALSE;
     }
 
@@ -200,8 +442,12 @@ class HearMeNodeAudioQueue {
   /**
    * Checks whether this node bundle is enrolled in queue pre-generation.
    */
-  protected function isNodeQueuedForAudio(EntityInterface $entity): bool {
-    if ($entity->getEntityTypeId() !== 'node' || !$entity->id()) {
+  public function isEligibleForPersistentAudio(EntityInterface $entity): bool {
+    if (!$entity instanceof NodeInterface || !$entity->id() || !$entity->isPublished()) {
+      return FALSE;
+    }
+
+    if (!$entity->access('view', new AnonymousUserSession())) {
       return FALSE;
     }
 
@@ -219,12 +465,13 @@ class HearMeNodeAudioQueue {
 
     $sourceConfig = $this->getBundleSourceConfig($entity);
     $parts = [];
-    if ($sourceConfig['title']) {
+    $anonymousUser = new AnonymousUserSession();
+    if ($sourceConfig['title'] && $entity->get('title')->access('view', $anonymousUser)) {
       $parts[] = $entity->label();
     }
 
     foreach ($sourceConfig['fields'] as $token) {
-      $fieldSource = $this->getSourceFieldText($entity, $token);
+      $fieldSource = $this->getSourceFieldText($entity, $token, $anonymousUser);
       if ($fieldSource !== '') {
         $parts[] = $fieldSource;
       }
@@ -235,8 +482,29 @@ class HearMeNodeAudioQueue {
     if ($text === '') {
       return NULL;
     }
+    if (mb_strlen($text) > $this->inputValidator->getMaxTextLength()) {
+      $this->logger->notice('HearMe: skipped queueing node @nid because its TTS source exceeds the configured text length limit.', [
+        '@nid' => $entity->id(),
+      ]);
+      return NULL;
+    }
 
-    $lang = $this->resolveNodeLanguage($entity, $providerId);
+    try {
+      $providerId ??= $this->providerResolver->getActiveProviderId();
+      $lang = $this->resolveSupportedNodeLanguage($entity, $providerId);
+    }
+    catch (\RuntimeException) {
+      $this->logger->notice('HearMe: skipped queueing node @nid because no valid active provider is configured.', [
+        '@nid' => $entity->id(),
+      ]);
+      return NULL;
+    }
+    if ($lang === NULL) {
+      $this->logger->notice('HearMe: skipped queueing node @nid because its language is not supported by the active provider.', [
+        '@nid' => $entity->id(),
+      ]);
+      return NULL;
+    }
     $sourceConfigHash = $this->buildSourceConfigHash($entity->bundle(), $sourceConfig);
 
     return [
@@ -284,9 +552,13 @@ class HearMeNodeAudioQueue {
   /**
    * Extracts text from a configured field token.
    */
-  protected function getSourceFieldText(EntityInterface $entity, string $token): string {
+  protected function getSourceFieldText(EntityInterface $entity, string $token, AnonymousUserSession $anonymousUser): string {
     $parsed = $this->parseSourceFieldToken($token);
     if ($parsed === NULL || !$this->isSupportedSourceField($entity, $parsed['field'], $parsed['property'])) {
+      return '';
+    }
+
+    if (!$entity->get($parsed['field'])->access('view', $anonymousUser)) {
       return '';
     }
 

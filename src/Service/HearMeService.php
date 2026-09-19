@@ -5,6 +5,7 @@ namespace Drupal\hear_me\Service;
 use Drupal\Core\Lock\LockBackendInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\Core\PrivateKey;
+use Drupal\hear_me\Exception\PersistentSynthesisUnavailableException;
 use Drupal\hear_me\TtsAudioResult;
 use Drupal\hear_me\TtsSynthesisResult;
 use Drupal\media\MediaInterface;
@@ -17,6 +18,7 @@ class HearMeService {
   protected TtsProviderResolver $providerResolver;
   protected AudioMediaFactory $audioMediaFactory;
   protected TtsCacheManager $cacheManager;
+  protected HearMeInputValidator $inputValidator;
   protected LockBackendInterface $lock;
   protected \Psr\Log\LoggerInterface $logger;
   protected PrivateKey $privateKey;
@@ -25,6 +27,7 @@ class HearMeService {
     TtsProviderResolver $providerResolver,
     AudioMediaFactory $audioMediaFactory,
     TtsCacheManager $cacheManager,
+    HearMeInputValidator $inputValidator,
     LockBackendInterface $lock,
     LoggerChannelFactoryInterface $loggerFactory,
     PrivateKey $privateKey,
@@ -32,6 +35,7 @@ class HearMeService {
     $this->providerResolver  = $providerResolver;
     $this->audioMediaFactory = $audioMediaFactory;
     $this->cacheManager      = $cacheManager;
+    $this->inputValidator    = $inputValidator;
     $this->lock              = $lock;
     $this->logger            = $loggerFactory->get('hear_me');
     $this->privateKey        = $privateKey;
@@ -43,11 +47,18 @@ class HearMeService {
    * Runtime playback should use getAudio(). This method intentionally creates
    * or reuses a Media entity because queue-based pre-generation attaches audio
    * to content.
+   *
+   * @throws \Drupal\hear_me\Exception\PersistentSynthesisUnavailableException
+   *   When provider discovery or persistent cache storage is temporarily
+   *   unavailable.
    */
   public function synthesize(string $text, string $lang, ?string $providerId = NULL): ?MediaInterface {
     $audio = $this->generateAudio($text, $lang, 'entity', TRUE, $providerId);
-    if ($audio === NULL || $audio->uri === NULL) {
+    if ($audio === NULL) {
       return NULL;
+    }
+    if ($audio->uri === NULL) {
+      throw new PersistentSynthesisUnavailableException('Synthesized audio could not be persisted.');
     }
 
     return $this->audioMediaFactory->createFromUri($audio->uri, $lang, $text);
@@ -80,9 +91,17 @@ class HearMeService {
   }
 
   private function generateAudio(string $text, string $lang, string $source, bool $forcePersistent, ?string $providerId = NULL): ?TtsAudioResult {
+    if (mb_strlen($text) > $this->inputValidator->getMaxTextLength()) {
+      $this->logger->warning('HearMe: synthesis input exceeded the configured text length limit.');
+      return NULL;
+    }
+
     $providerKey = $providerId ?? $this->providerResolver->getActiveProviderId();
     $provider = $this->providerResolver->getProvider($providerKey);
     if ($provider === NULL) {
+      if ($forcePersistent) {
+        throw new PersistentSynthesisUnavailableException('The persistent synthesis provider is unavailable.');
+      }
       return NULL;
     }
 
@@ -115,6 +134,9 @@ class HearMeService {
         $lockAcquired = $this->lock->acquire($lockName, 60.0);
         if (!$lockAcquired) {
           $this->logger->warning('HearMe: synthesis for cache item @cid is already in progress.', ['@cid' => $cid]);
+          if ($forcePersistent) {
+            throw new PersistentSynthesisUnavailableException('Persistent synthesis is already in progress.');
+          }
           return NULL;
         }
       }

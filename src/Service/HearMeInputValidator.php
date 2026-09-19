@@ -39,7 +39,17 @@ class HearMeInputValidator {
       return TtsInputValidationResult::invalid('Invalid JSON payload');
     }
 
-    $text = $this->normalizeText((string) ($data['text'] ?? ''));
+    if (!isset($data['text']) || !is_string($data['text'])) {
+      return TtsInputValidationResult::invalid('Missing text');
+    }
+
+    foreach (['lang', 'source', 'cache_token'] as $key) {
+      if (array_key_exists($key, $data) && !is_string($data[$key])) {
+        return TtsInputValidationResult::invalid('Invalid ' . str_replace('_', ' ', $key));
+      }
+    }
+
+    $text = $this->normalizeText($data['text']);
     if ($text === '') {
       return TtsInputValidationResult::invalid('Missing text');
     }
@@ -65,7 +75,7 @@ class HearMeInputValidator {
     return TtsInputValidationResult::valid($text, $resolvedLang, $providerId, $source, $cacheToken);
   }
 
-  private function getMaxRequestBytes(): int {
+  public function getMaxRequestBytes(): int {
     return $this->getBoundedConfigInt(
       'max_request_bytes',
       self::DEFAULT_MAX_REQUEST_BYTES,
@@ -74,7 +84,7 @@ class HearMeInputValidator {
     );
   }
 
-  private function getMaxTextLength(): int {
+  public function getMaxTextLength(): int {
     return $this->getBoundedConfigInt(
       'max_text_length',
       self::DEFAULT_MAX_TEXT_LENGTH,
@@ -102,7 +112,8 @@ class HearMeInputValidator {
     return strtolower(str_replace('_', '-', trim($lang)));
   }
 
-  private function resolveSupportedLanguage(string $lang, string $providerId): ?string {
+  public function resolveSupportedLanguage(string $lang, string $providerId): ?string {
+    $lang = $this->normalizeLang($lang);
     $supportedLangs = [];
     foreach ($this->providerResolver->getSupportedLanguages($providerId) as $supportedLang) {
       $supportedLangs[$this->normalizeLang($supportedLang)] = $supportedLang;

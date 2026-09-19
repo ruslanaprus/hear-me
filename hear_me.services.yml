@@ -29,6 +29,7 @@ services:
       - '@file_system'
       - '@stream_wrapper_manager'
       - '@entity_type.manager'
+      - '@file.usage'
       - '@datetime.time'
       - '@logger.factory'
 
@@ -47,10 +48,13 @@ services:
     arguments:
       - '@config.factory'
       - '@hear_me.provider_resolver'
+      - '@hear_me.input_validator'
       - '@entity_type.manager'
       - '@queue'
       - '@state'
+      - '@keyvalue'
       - '@lock'
+      - '@datetime.time'
       - '@logger.factory'
 
   # Shared validator for node audio fields used by queue generation.
@@ -75,6 +79,8 @@ services:
       - '@hear_me.provider_resolver'
       - '@hear_me.audio_field_validator'
 
+  Drupal\hear_me\Service\HearMeExistingContentQueue: '@hear_me.existing_content_queue'
+
   # Installation and runtime readiness checks for the admin settings form
   hear_me.setup_status:
     class: Drupal\hear_me\Service\HearMeSetupStatus
@@ -97,6 +103,7 @@ services:
       - '@hear_me.provider_resolver'
       - '@hear_me.audio_media_factory'
       - '@hear_me.cache_manager'
+      - '@hear_me.input_validator'
       - '@lock'
       - '@logger.factory'
       - '@private_key'
@@ -114,4 +121,20 @@ services:
     arguments:
       - '@config.factory'
       - '@entity_type.manager'
+      - '@entity_field.manager'
+      - '@database'
+      - '@lock'
+      - '@queue'
+      - '@keyvalue'
+      - '@datetime.time'
+      - '@hear_me.node_audio_queue'
+      - '@hear_me.cache_manager'
       - '@logger.factory'
+
+  hear_me.uninstall_validator:
+    class: Drupal\hear_me\Service\HearMeUninstallValidator
+    arguments:
+      - '@entity_type.manager'
+      - '@string_translation'
+    tags:
+      - { name: module_install.uninstall_validator }

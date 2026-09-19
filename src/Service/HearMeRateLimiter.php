@@ -21,8 +21,8 @@ class HearMeRateLimiter {
     protected RequestStack $requestStack,
   ) {}
 
-  public function check(string $providerKey): ?string {
-    foreach ($this->getChecks($providerKey) as $check) {
+  public function check(string $providerKey, bool $requestWide = FALSE): ?string {
+    foreach ($this->getChecks($providerKey, $requestWide) as $check) {
       if ($check['limit'] <= 0) {
         continue;
       }
@@ -35,8 +35,8 @@ class HearMeRateLimiter {
     return NULL;
   }
 
-  public function register(string $providerKey): void {
-    foreach ($this->getChecks($providerKey) as $check) {
+  public function register(string $providerKey, bool $requestWide = FALSE): void {
+    foreach ($this->getChecks($providerKey, $requestWide) as $check) {
       if ($check['limit'] <= 0) {
         continue;
       }
@@ -45,42 +45,43 @@ class HearMeRateLimiter {
     }
   }
 
-  protected function getChecks(string $providerKey): array {
+  protected function getChecks(string $providerKey, bool $requestWide = FALSE): array {
     $safeProvider = preg_replace('/[^a-z0-9_:-]/', '_', strtolower($providerKey)) ?: 'unknown';
+    $bucket = $requestWide ? 'request' : 'provider:' . $safeProvider;
     $window = $this->getConfigInt('rate_limit_window_seconds', 60);
     $window = max(1, $window);
 
     return [
       [
-        'event' => 'hear_me.tts.user.' . $safeProvider,
+        'event' => 'hear_me.tts.user.' . $bucket,
         'identifier' => $this->getUserIdentifier(),
         'limit' => $this->getConfigInt('rate_limit_user_requests', 20),
         'window' => $window,
         'message' => 'Too many text-to-speech requests. Please wait before trying again.',
       ],
       [
-        'event' => 'hear_me.tts.ip.' . $safeProvider,
+        'event' => 'hear_me.tts.ip.' . $bucket,
         'identifier' => $this->getIpIdentifier(),
         'limit' => $this->getConfigInt('rate_limit_ip_requests', 60),
         'window' => $window,
         'message' => 'Too many text-to-speech requests from this network. Please wait before trying again.',
       ],
       [
-        'event' => 'hear_me.tts.role.' . $safeProvider,
+        'event' => 'hear_me.tts.role.' . $bucket,
         'identifier' => $this->getRoleIdentifier(),
         'limit' => $this->getConfigInt('rate_limit_role_requests', 0),
         'window' => $window,
         'message' => 'Text-to-speech is temporarily busy for this role. Please try again later.',
       ],
       [
-        'event' => 'hear_me.tts.daily.' . $safeProvider,
+        'event' => 'hear_me.tts.daily.' . $bucket,
         'identifier' => $this->getUserIdentifier(),
         'limit' => $this->getConfigInt('daily_user_quota', 500),
         'window' => 86400,
         'message' => 'Daily text-to-speech quota exceeded. Please try again tomorrow.',
       ],
       [
-        'event' => 'hear_me.tts.monthly.' . $safeProvider,
+        'event' => 'hear_me.tts.monthly.' . $bucket,
         'identifier' => $this->getUserIdentifier(),
         'limit' => $this->getConfigInt('monthly_user_quota', 5000),
         'window' => 2592000,

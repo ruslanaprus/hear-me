@@ -1,6 +1,23 @@
 <?php
 
 use Drupal\Core\Entity\EntityInterface;
+use Drupal\node\NodeInterface;
+
+/**
+ * Implements hook_entity_presave().
+ */
+function hear_me_entity_presave(EntityInterface $entity): void {
+  if (!$entity instanceof NodeInterface || $entity->isNew()) {
+    return;
+  }
+
+  $nodeAudioQueue = \Drupal::service('hear_me.node_audio_queue');
+  $attacher = \Drupal::service('hear_me.node_audio_attacher');
+  $queueItem = $nodeAudioQueue->buildQueueItem($entity);
+  if ($attacher->shouldRetractGeneratedAudio($entity, $queueItem)) {
+    $attacher->removeGeneratedAudioReferences($entity);
+  }
+}
 
 /**
  * Implements hook_entity_insert().
@@ -12,16 +29,38 @@ use Drupal\Core\Entity\EntityInterface;
  * Media > HearMe TTS Settings. No bundles are enabled by default (opt-in)
  */
 function hear_me_entity_insert(EntityInterface $entity): void {
-  \Drupal::service('hear_me.node_audio_queue')->queueNode($entity);
+  if ($entity instanceof NodeInterface) {
+    \Drupal::service('hear_me.node_audio_attacher')->queueNodeAfterTransaction((int) $entity->id());
+  }
 }
 
 /**
  * Implements hook_entity_update().
  */
 function hear_me_entity_update(EntityInterface $entity): void {
+  if (!$entity instanceof NodeInterface) {
+    return;
+  }
+
+  $attacher = \Drupal::service('hear_me.node_audio_attacher');
   $nodeAudioQueue = \Drupal::service('hear_me.node_audio_queue');
-  if ($nodeAudioQueue->hasAudioSourceChanged($entity)) {
-    $nodeAudioQueue->queueNode($entity);
+  $queueIfMissing = $nodeAudioQueue->hasAudioSourceChanged($entity);
+  $original = $entity->getOriginal();
+  if ($original instanceof NodeInterface) {
+    $attacher->cleanupRemovedGeneratedAudio($original, $entity);
+    if (!$original->isPublished() && $entity->isPublished()) {
+      $queueIfMissing = TRUE;
+    }
+  }
+  $attacher->recheckEligibilityAfterTransaction((int) $entity->id(), $queueIfMissing);
+}
+
+/**
+ * Implements hook_entity_delete().
+ */
+function hear_me_entity_delete(EntityInterface $entity): void {
+  if ($entity instanceof NodeInterface) {
+    \Drupal::service('hear_me.node_audio_attacher')->cleanupRemovedGeneratedAudio($entity);
   }
 }
 
@@ -30,4 +69,5 @@ function hear_me_entity_update(EntityInterface $entity): void {
  */
 function hear_me_cron() {
   \Drupal::service('hear_me.cache_manager')->cleanup();
+  \Drupal::service('hear_me.node_audio_attacher')->publishPendingGeneratedAudioCleanup();
 }

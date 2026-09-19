@@ -7,3 +7,4 @@ configure: hear_me.settings
 dependencies:
   - drupal:media
   - drupal:file
+  - drupal:node

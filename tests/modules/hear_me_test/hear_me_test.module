@@ -1,7 +1,9 @@
 <?php
 
+use Drupal\Core\Session\AccountInterface;
 use Drupal\file\FileInterface;
 use Drupal\media\MediaInterface;
+use Drupal\node\NodeInterface;
 
 /**
  * Implements hook_file_presave().
@@ -19,4 +21,40 @@ function hear_me_test_media_presave(MediaInterface $media): void {
   if (\Drupal::state()->get('hear_me_test.fail_media_save', FALSE)) {
     throw new \RuntimeException('Simulated Media save failure.');
   }
+}
+
+/**
+ * Implements hook_node_grants().
+ */
+function hear_me_test_node_grants(AccountInterface $account, string $operation): array {
+  if ($operation !== 'view') {
+    return [];
+  }
+
+  return \Drupal::state()->get('hear_me_test.node_access_enabled', FALSE)
+    ? ['hear_me_test' => [1]]
+    : ['all' => [0]];
+}
+
+/**
+ * Implements hook_node_access_records().
+ */
+function hear_me_test_node_access_records(NodeInterface $node): array {
+  if (!\Drupal::state()->get('hear_me_test.node_access_enabled', FALSE)) {
+    return [[
+      'realm' => 'all',
+      'gid' => 0,
+      'grant_view' => 1,
+      'grant_update' => 0,
+      'grant_delete' => 0,
+    ]];
+  }
+
+  return [[
+    'realm' => 'hear_me_test',
+    'gid' => $node->isPromoted() ? 1 : 2,
+    'grant_view' => 1,
+    'grant_update' => 0,
+    'grant_delete' => 0,
+  ]];
 }

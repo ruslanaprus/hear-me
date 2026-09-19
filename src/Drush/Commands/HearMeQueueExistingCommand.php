@@ -3,44 +3,51 @@
 namespace Drupal\hear_me\Drush\Commands;
 
 use Drupal\hear_me\Service\HearMeExistingContentQueue;
-use Drush\Commands\DrushCommands;
+use Drush\Commands\AutowireTrait;
+use Symfony\Component\Console\Attribute\AsCommand;
+use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Input\InputOption;
+use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Console\Style\SymfonyStyle;
 
 /**
- * Drush commands for HearMe.
+ * Queues existing content for HearMe audio pre-generation.
  */
-class HearMeCommands extends DrushCommands {
+#[AsCommand(
+  name: 'hear-me:queue-existing',
+  description: 'Queues published existing content for HearMe audio generation.',
+  aliases: ['hear-me-backfill'],
+)]
+final class HearMeQueueExistingCommand extends Command {
+
+  use AutowireTrait;
 
   public function __construct(
-    protected HearMeExistingContentQueue $existingContentQueue,
+    private readonly HearMeExistingContentQueue $existingContentQueue,
   ) {
     parent::__construct();
   }
 
   /**
-   * Queues existing content for HearMe audio pre-generation.
-   *
-   * @command hear-me:queue-existing
-   * @aliases hear-me-backfill
-   *
-   * @option bundles Comma-separated content type machine names. Defaults to configured queue bundles.
-   * @option include-unpublished Include unpublished nodes. By default only published nodes are scanned.
-   * @option requeue-existing Queue nodes even when the configured audio field already has media.
-   * @option limit Maximum candidate nodes to scan. Zero means no limit.
-   *
-   * @usage drush hear-me:queue-existing
-   *   Queue published existing content without attached HearMe audio.
-   * @usage drush hear-me:queue-existing --bundles=article,page --limit=5000
-   *   Queue up to 5000 existing article/page nodes.
-   * @usage drush hear-me:queue-existing --include-unpublished --requeue-existing
-   *   Include unpublished nodes and nodes that already have attached audio.
+   * {@inheritdoc}
    */
-  public function queueExisting(array $options = [
-    'bundles' => '',
-    'include-unpublished' => FALSE,
-    'requeue-existing' => FALSE,
-    'limit' => 0,
-  ]): void {
-    $requestedBundles = $this->parseBundles((string) ($options['bundles'] ?? ''));
+  protected function configure(): void {
+    $this
+      ->addOption('bundles', NULL, InputOption::VALUE_REQUIRED, 'Comma-separated configured content type machine names.', '')
+      ->addOption('requeue-existing', NULL, InputOption::VALUE_NONE, 'Queue nodes even when the configured audio field already has media.')
+      ->addOption('limit', NULL, InputOption::VALUE_REQUIRED, 'Maximum candidate nodes to scan; zero means no limit.', '0')
+      ->addUsage('hear-me:queue-existing')
+      ->addUsage('hear-me:queue-existing --bundles=article,page --limit=5000')
+      ->addUsage('hear-me:queue-existing --requeue-existing');
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  protected function execute(InputInterface $input, OutputInterface $output): int {
+    $io = new SymfonyStyle($input, $output);
+    $requestedBundles = $this->parseBundles((string) $input->getOption('bundles'));
     $configuredBundles = $this->existingContentQueue->getConfiguredBundles();
     if (!$configuredBundles) {
       throw new \InvalidArgumentException('No content types are configured for HearMe queue pre-generation. Configure queue bundles first.');
@@ -48,7 +55,7 @@ class HearMeCommands extends DrushCommands {
 
     $unconfiguredBundles = $this->existingContentQueue->getUnconfiguredBundles($requestedBundles);
     if ($unconfiguredBundles) {
-      $this->io()->warning(sprintf(
+      $io->warning(sprintf(
         'Ignoring bundle(s) that are not configured for HearMe queue pre-generation: %s',
         implode(', ', $unconfiguredBundles),
       ));
@@ -61,19 +68,19 @@ class HearMeCommands extends DrushCommands {
 
     $stats = $this->existingContentQueue->queueAll(
       $bundles,
-      empty($options['include-unpublished']),
-      empty($options['requeue-existing']),
-      max(0, (int) ($options['limit'] ?? 0)),
+      TRUE,
+      !$input->getOption('requeue-existing'),
+      max(0, (int) $input->getOption('limit')),
       HearMeExistingContentQueue::DEFAULT_BATCH_SIZE,
     );
 
-    $this->io()->success(sprintf(
+    $io->success(sprintf(
       'Queued %d HearMe audio job(s) after scanning %d node(s).',
       $stats['queued'],
       $stats['scanned'],
     ));
 
-    $this->io()->table(['Metric', 'Count'], [
+    $io->table(['Metric', 'Count'], [
       ['Scanned', $stats['scanned']],
       ['Queued', $stats['queued']],
       ['Skipped: already queued', $stats['skipped_duplicate_queue']],
@@ -83,6 +90,8 @@ class HearMeCommands extends DrushCommands {
       ['Skipped: unsupported language', $stats['skipped_unsupported_language']],
       ['Skipped: could not be loaded', $stats['skipped_not_loaded']],
     ]);
+
+    return Command::SUCCESS;
   }
 
   /**

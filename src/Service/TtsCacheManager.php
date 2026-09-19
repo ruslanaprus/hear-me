@@ -8,6 +8,8 @@ use Drupal\Core\Database\Connection;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\File\FileExists;
 use Drupal\Core\File\FileSystemInterface;
+use Drupal\file\FileInterface;
+use Drupal\file\FileUsage\FileUsageInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\Core\StreamWrapper\StreamWrapperManagerInterface;
 use Drupal\hear_me\TtsAudioResult;
@@ -32,6 +34,7 @@ final class TtsCacheManager {
     protected FileSystemInterface $fileSystem,
     protected StreamWrapperManagerInterface $streamWrapperManager,
     protected EntityTypeManagerInterface $entityTypeManager,
+    protected FileUsageInterface $fileUsage,
     protected TimeInterface $time,
     LoggerChannelFactoryInterface $loggerFactory,
   ) {
@@ -72,16 +75,19 @@ final class TtsCacheManager {
       'inline' => 'cache_inline_ttl',
       'page' => 'cache_page_ttl',
       'selection' => 'cache_selection_ttl',
-      'entity' => 'cache_entity_ttl',
+      'entity' => NULL,
       default => 'cache_ad_hoc_ttl',
     };
+
+    if ($key === NULL) {
+      return 0;
+    }
 
     $defaults = [
       'cache_inline_ttl' => 2592000,
       'cache_page_ttl' => 86400,
       'cache_selection_ttl' => 3600,
       'cache_ad_hoc_ttl' => 0,
-      'cache_entity_ttl' => 0,
     ];
 
     $value = $this->configFactory->get('hear_me.settings')->get($key);
@@ -234,7 +240,7 @@ final class TtsCacheManager {
       return new TtsAudioResult($result->bytes, $result->mimeType, $result->extension);
     }
 
-    $savedUri = $this->fileSystem->saveData($result->bytes, $uri, FileExists::Replace);
+    $savedUri = $this->fileSystem->saveData($result->bytes, $uri, FileExists::Rename);
     if (!$savedUri) {
       $this->logger->error('HearMe: failed to save synthesized audio data to @uri.', ['@uri' => $uri]);
       return new TtsAudioResult($result->bytes, $result->mimeType, $result->extension);
@@ -329,6 +335,74 @@ final class TtsCacheManager {
     return ['count' => $count, 'bytes' => $bytes];
   }
 
+  /**
+   * Checks whether a File entity has persistent HearMe generation provenance.
+   */
+  public function isPersistentGeneratedFile(int $fid): bool {
+    if ($fid <= 0 || !$this->metadataTableAvailable()) {
+      return FALSE;
+    }
+
+    return (bool) $this->database->select('hear_me_audio_cache', 'c')
+      ->condition('fid', $fid)
+      ->condition('source', 'entity')
+      ->countQuery()
+      ->execute()
+      ->fetchField();
+  }
+
+  /**
+   * Returns the source-text hash recorded for a persistent generated file.
+   */
+  public function getPersistentGeneratedFileSource(int $fid): ?array {
+    if ($fid <= 0 || !$this->metadataTableAvailable()) {
+      return NULL;
+    }
+
+    $source = $this->database->select('hear_me_audio_cache', 'c')
+      ->fields('c', ['text_hash', 'langcode'])
+      ->condition('fid', $fid)
+      ->condition('source', 'entity')
+      ->execute()
+      ->fetchAssoc();
+    return is_array($source) && $source['text_hash'] !== '' && $source['langcode'] !== ''
+      ? $source
+      : NULL;
+  }
+
+  /**
+   * Deletes an unreferenced persistent file with HearMe provenance.
+   */
+  public function deletePersistentGeneratedFileIfUnused(int $fid): bool {
+    if (!$this->isPersistentGeneratedFile($fid)) {
+      return TRUE;
+    }
+
+    $file = $this->entityTypeManager->getStorage('file')->load($fid);
+    if ($file instanceof FileInterface && $this->fileUsage->listUsage($file)) {
+      return TRUE;
+    }
+
+    try {
+      if ($file instanceof FileInterface) {
+        $file->delete();
+      }
+      $this->database->delete('hear_me_audio_cache')
+        ->condition('fid', $fid)
+        ->condition('source', 'entity')
+        ->execute();
+    }
+    catch (\Throwable $e) {
+      $this->logger->warning('HearMe: failed to delete unreferenced generated audio file @fid: @error', [
+        '@fid' => $fid,
+        '@error' => $e::class,
+      ]);
+      return FALSE;
+    }
+
+    return TRUE;
+  }
+
   protected function metadataTableAvailable(): bool {
     if ($this->metadataAvailable === NULL) {
       $this->metadataAvailable = $this->database->schema()->tableExists('hear_me_audio_cache');
@@ -356,11 +430,18 @@ final class TtsCacheManager {
       ->fields('c')
       ->condition('source', 'entity', '<>')
       ->orderBy('last_accessed', 'ASC')
-      ->range(0, $count - $maxFiles)
       ->execute()
       ->fetchAll();
 
-    return $this->deleteRows($rows);
+    $deleted = 0;
+    $target = $count - $maxFiles;
+    foreach ($rows as $row) {
+      $deleted += $this->deleteRows([$row]);
+      if ($deleted >= $target) {
+        break;
+      }
+    }
+    return $deleted;
   }
 
   protected function enforceMaxTotalSize(): int {
@@ -383,17 +464,19 @@ final class TtsCacheManager {
       ->execute()
       ->fetchAll();
 
-    $rowsToDelete = [];
-    $selectedBytes = 0;
+    $deleted = 0;
+    $deletedBytes = 0;
     foreach ($candidateRows as $row) {
-      $rowsToDelete[] = $row;
-      $selectedBytes += (int) $row->filesize;
-      if ($selectedBytes >= $bytesToFree) {
+      if ($this->deleteRows([$row]) === 1) {
+        $deleted++;
+        $deletedBytes += (int) $row->filesize;
+      }
+      if ($deletedBytes >= $bytesToFree) {
         break;
       }
     }
 
-    return $this->deleteRows($rowsToDelete);
+    return $deleted;
   }
 
   protected function deleteRows(array $rows): int {
@@ -409,11 +492,7 @@ final class TtsCacheManager {
         continue;
       }
 
-      $cids[] = $row->cid;
       $uri = (string) $row->uri;
-      if (!$this->isManagedCacheUri($uri)) {
-        continue;
-      }
 
       try {
         $file = NULL;
@@ -425,13 +504,19 @@ final class TtsCacheManager {
           $file = $files ? reset($files) : NULL;
         }
 
-        if ($file) {
+        if ($file instanceof FileInterface && $this->fileUsage->listUsage($file)) {
+          $cids[] = $row->cid;
+          continue;
+        }
+
+        if ($this->isManagedCacheUri($uri) && $file) {
           $file->delete();
         }
         $realpath = $this->fileSystem->realpath($uri);
-        if (!$file && $realpath && is_file($realpath)) {
+        if ($this->isManagedCacheUri($uri) && !$file && $realpath && is_file($realpath)) {
           $this->fileSystem->delete($uri);
         }
+        $cids[] = $row->cid;
       }
       catch (\Throwable $e) {
         $this->logger->warning('HearMe: failed to delete cached audio @uri: @message', [

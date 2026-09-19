@@ -2,10 +2,14 @@
 
 namespace Drupal\hear_me\Plugin\QueueWorker;
 
+use Drupal\Core\Entity\EntityStorageException;
+use Drupal\Core\Lock\LockAcquiringException;
 use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
 use Drupal\Core\Queue\Attribute\QueueWorker;
+use Drupal\Core\Queue\DelayedRequeueException;
 use Drupal\Core\Queue\QueueWorkerBase;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
+use Drupal\hear_me\Exception\PersistentSynthesisUnavailableException;
 use Drupal\hear_me\Service\HearMeNodeAudioQueue;
 use Drupal\hear_me\Service\HearMeService;
 use Drupal\hear_me\Service\NodeAudioAttacher;
@@ -67,46 +71,109 @@ class HearMeQueueWorker extends QueueWorkerBase implements ContainerFactoryPlugi
    * {@inheritdoc}
    */
   public function processItem($data): void {
+    if (!is_array($data)) {
+      return;
+    }
+
     $nid = (int) ($data['nid'] ?? 0);
-    if ($nid <= 0) {
+    $queuedHash = (string) ($data['content_hash'] ?? '');
+    $token = (string) ($data['token'] ?? '');
+    if ($nid <= 0 || $queuedHash === '' || $token === '') {
       return;
     }
 
     $providerId = $this->providerResolver->getActiveProviderId();
-    $queuedHash = (string) ($data['content_hash'] ?? '');
-    if ($queuedHash === '' && !empty($data['text'])) {
-      $lang = $data['lang'] ?? NULL;
-      if ($lang === NULL) {
-        $lang = $this->providerResolver->getDefaultLanguage($providerId);
-      }
-      $queuedHash = $this->nodeAudioQueue->buildContentHash(
-        (string) $data['text'],
-        (string) $lang,
-      );
-    }
-
-    if ($queuedHash === '') {
+    if (!$this->nodeAudioQueue->isCurrentQueueItem($nid, $queuedHash, $token)) {
       return;
     }
 
     $current = $this->nodeAudioQueue->buildCurrentQueueItem($nid, $providerId);
     if ($current === NULL) {
-      $this->nodeAudioQueue->clearQueuedHash($nid, $queuedHash);
+      $this->clearQueuedHash($nid, $queuedHash, $token);
       return;
     }
 
     if (!hash_equals($current['content_hash'], $queuedHash)) {
-      $this->nodeAudioQueue->clearQueuedHash($nid, $queuedHash);
+      $this->clearQueuedHash($nid, $queuedHash, $token);
       return;
     }
 
-    $media = $this->ttsService->synthesize($current['text'], $current['lang'], $providerId);
-
-    if ($media) {
-      $this->nodeAudioAttacher->attach($nid, $media);
+    $attemptToken = $this->nodeAudioQueue->reserveSynthesisAttempt($nid, $queuedHash, $token);
+    if ($attemptToken === NULL) {
+      throw new DelayedRequeueException(60, 'HearMe queue state is busy; the queue item will be retried.');
+    }
+    if ($attemptToken === '') {
+      return;
     }
 
-    $this->nodeAudioQueue->clearQueuedHash($nid, $queuedHash);
+    try {
+      $media = $this->ttsService->synthesize($current['text'], $current['lang'], $providerId);
+    }
+    catch (PersistentSynthesisUnavailableException $e) {
+      $this->releaseSynthesisAttempt($nid, $queuedHash, $token, $attemptToken);
+      throw new DelayedRequeueException(60, 'HearMe could not persist synthesized audio; the queue item will be retried.', 0, $e);
+    }
+    if (!$media) {
+      $failures = $this->nodeAudioQueue->recordSynthesisFailure($nid, $queuedHash, $token, $attemptToken);
+      if ($failures === NULL) {
+        throw new DelayedRequeueException(60, 'HearMe queue state is busy; the queue item will be retried.');
+      }
+      if ($failures === 0 || $failures >= HearMeNodeAudioQueue::MAX_SYNTHESIS_ATTEMPTS) {
+        return;
+      }
+      throw new DelayedRequeueException(60, 'HearMe synthesis failed; the queue item will be retried.');
+    }
+
+    $latest = $this->nodeAudioQueue->buildCurrentQueueItem($nid, $providerId);
+    if ($latest !== NULL && hash_equals($latest['content_hash'], $queuedHash)) {
+      try {
+        if (!$this->nodeAudioAttacher->attach($nid, $media, $queuedHash, $token, $attemptToken)) {
+          $this->nodeAudioAttacher->cleanupOrphanedGeneratedAudio($media);
+        }
+      }
+      catch (LockAcquiringException $e) {
+        $this->releaseSynthesisAttempt($nid, $queuedHash, $token, $attemptToken);
+        throw new DelayedRequeueException(60, 'HearMe generated media is busy; the queue item will be retried.', 0, $e);
+      }
+      catch (EntityStorageException $e) {
+        $this->releaseSynthesisAttempt($nid, $queuedHash, $token, $attemptToken);
+        throw new DelayedRequeueException(60, 'HearMe generated media changed; the queue item will be retried.', 0, $e);
+      }
+    }
+    else {
+      $this->nodeAudioAttacher->cleanupOrphanedGeneratedAudio($media);
+    }
+
+    $this->clearQueuedHash($nid, $queuedHash, $token, $attemptToken);
+  }
+
+  /**
+   * Clears marker ownership without allowing lock contention to lose the job.
+   */
+  private function clearQueuedHash(int $nid, string $contentHash, string $token, ?string $attemptToken = NULL): void {
+    try {
+      if ($attemptToken === NULL) {
+        $this->nodeAudioQueue->clearQueuedHash($nid, $contentHash, $token);
+      }
+      else {
+        $this->nodeAudioQueue->clearQueuedHash($nid, $contentHash, $token, $attemptToken);
+      }
+    }
+    catch (LockAcquiringException $e) {
+      throw new DelayedRequeueException(60, 'HearMe queue state is busy; the queue item will be retried.', 0, $e);
+    }
+  }
+
+  /**
+   * Releases a successful reservation when a local handoff must be retried.
+   */
+  private function releaseSynthesisAttempt(int $nid, string $contentHash, string $token, string $attemptToken): void {
+    try {
+      $this->nodeAudioQueue->completeSynthesisAttempt($nid, $contentHash, $token, $attemptToken);
+    }
+    catch (LockAcquiringException $e) {
+      throw new DelayedRequeueException(60, 'HearMe queue state is busy; the queue item will be retried.', 0, $e);
+    }
   }
 
 }

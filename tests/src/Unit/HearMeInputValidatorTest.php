@@ -92,6 +92,25 @@ class HearMeInputValidatorTest extends TestCase {
   }
 
   /**
+   * Tests that structured JSON values are never coerced into strings.
+   */
+  public function testRejectsWrongJsonValueTypes(): void {
+    $settingsConfig = $this->createMock(ImmutableConfig::class);
+    $settingsConfig->method('get')->willReturn(HearMeInputValidator::DEFAULT_MAX_REQUEST_BYTES);
+    $configFactory = $this->createMock(ConfigFactoryInterface::class);
+    $configFactory->method('get')->willReturn($settingsConfig);
+    $validator = new HearMeInputValidator(
+      $configFactory,
+      (new \ReflectionClass(TtsProviderResolver::class))->newInstanceWithoutConstructor(),
+    );
+
+    $result = $validator->validateRequestBody('{"text":["not","text"]}');
+
+    $this->assertFalse($result->isValid());
+    $this->assertSame('Missing text', $result->errorMessage);
+  }
+
+  /**
    * Creates a validator with valid request-limit configuration.
    */
   private function createValidator(string $defaultLang, array $supportedLangs, bool $expectsDefault = FALSE): HearMeInputValidator {

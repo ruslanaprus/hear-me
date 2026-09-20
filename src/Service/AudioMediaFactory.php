@@ -10,7 +10,7 @@ use Drupal\file\FileInterface;
 use Drupal\media\MediaInterface;
 
 /**
- * Creates or reuses File and Media entities for generated audio.
+ * Creates or reuses Media entities for provenance-backed audio Files.
  *
  * @internal
  */
@@ -29,27 +29,12 @@ final class AudioMediaFactory {
   }
 
   /**
-   * Creates or reuses managed entities for a generated audio URI.
+   * Creates or reuses Media for an exact provenance-backed File entity.
    */
-  public function createFromUri(string $uri, string $lang, string $text): MediaInterface {
-    $existingFiles = $this->fileStorage->loadByProperties(['uri' => $uri]);
-
-    if ($existingFiles) {
-      $file = reset($existingFiles);
-    }
-    else {
-      $file = $this->fileStorage->create([
-        'uri' => $uri,
-        'status' => 1,
-      ]);
-      if (!$file instanceof FileInterface) {
-        throw new \UnexpectedValueException('The File entity storage did not create a File entity.');
-      }
-      $file->save();
-    }
-
-    if (!$file instanceof FileInterface) {
-      throw new \UnexpectedValueException('The File entity storage returned an invalid entity.');
+  public function createFromFile(int $fileId, string $uri, string $lang, string $text): MediaInterface {
+    $file = $fileId > 0 ? $this->fileStorage->load($fileId) : NULL;
+    if (!$file instanceof FileInterface || $file->getFileUri() !== $uri) {
+      throw new \UnexpectedValueException('Persistent audio provenance did not resolve to the expected File entity.');
     }
 
     $existingMedia = $this->mediaStorage->loadByProperties([

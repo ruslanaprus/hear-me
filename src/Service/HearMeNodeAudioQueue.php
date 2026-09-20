@@ -17,6 +17,7 @@ use Drupal\Core\Queue\QueueFactory;
 use Drupal\Core\Render\RendererInterface;
 use Drupal\Core\Session\AccountSwitcherInterface;
 use Drupal\Core\Session\AnonymousUserSession;
+use Drupal\hear_me\Exception\PersistentSynthesisUnavailableException;
 use Drupal\node\NodeInterface;
 
 /**
@@ -371,11 +372,12 @@ class HearMeNodeAudioQueue {
    * Builds a queue item for a node enrolled in TTS pre-generation.
    */
   public function buildQueueItem(EntityInterface $entity, ?string $providerId = NULL): ?array {
-    if (!$this->isEligibleForPersistentAudio($entity)) {
+    $publicSource = $this->buildPublicAudioSource($entity);
+    if ($publicSource === NULL) {
       return NULL;
     }
 
-    $source = $this->buildNodeAudioSource($entity, $providerId);
+    $source = $this->buildProviderReadySource($entity, $publicSource, $providerId);
     if ($source === NULL) {
       return NULL;
     }
@@ -383,6 +385,28 @@ class HearMeNodeAudioQueue {
     return [
       'nid' => (int) $entity->id(),
     ] + $source;
+  }
+
+  /**
+   * Builds public-safe source data without requiring a ready TTS provider.
+   */
+  public function buildPublicAudioSource(EntityInterface $entity): ?array {
+    if (!$this->isEligibleForPersistentAudio($entity)) {
+      return NULL;
+    }
+
+    $source = $this->buildNodeTextSource($entity);
+    if ($source === NULL) {
+      return NULL;
+    }
+
+    $original = $entity instanceof NodeInterface ? $entity->getOriginal() : NULL;
+    $languageChanged = $original instanceof EntityInterface
+      && $this->getSourceLanguageKey($entity) !== $this->getSourceLanguageKey($original);
+    return $source + [
+      'lang' => $this->resolvePublicSourceLanguage($entity),
+      'language_changed' => $languageChanged,
+    ];
   }
 
   /**
@@ -403,7 +427,22 @@ class HearMeNodeAudioQueue {
       return NULL;
     }
 
-    return $node instanceof EntityInterface ? $this->buildQueueItem($node, $providerId) : NULL;
+    if (!$node instanceof EntityInterface) {
+      return NULL;
+    }
+
+    $publicSource = $this->buildPublicAudioSource($node);
+    if ($publicSource === NULL) {
+      return NULL;
+    }
+
+    $source = $this->buildProviderReadySource($node, $publicSource, $providerId, TRUE);
+    if ($source === NULL) {
+      return NULL;
+    }
+    return [
+      'nid' => (int) $node->id(),
+    ] + $source;
   }
 
   /**
@@ -426,12 +465,7 @@ class HearMeNodeAudioQueue {
 
     $original = $entity->getOriginal();
     $hasOriginal = $original instanceof EntityInterface && $original->getEntityTypeId() === 'node';
-    $providerId = NULL;
-    if ($this->usesProviderDefaultLanguage($entity) || ($hasOriginal && $this->usesProviderDefaultLanguage($original))) {
-      $providerId = $this->providerResolver->getActiveProviderId();
-    }
-
-    $current = $this->buildNodeAudioSource($entity, $providerId);
+    $current = $this->buildNodeTextSource($entity);
     if ($current === NULL) {
       return FALSE;
     }
@@ -440,12 +474,20 @@ class HearMeNodeAudioQueue {
       return TRUE;
     }
 
-    $previous = $this->buildNodeAudioSource($original, $providerId);
+    $previous = $this->buildNodeTextSource($original);
     if ($previous === NULL) {
       return TRUE;
     }
 
-    return !hash_equals($previous['content_hash'], $current['content_hash']);
+    $currentLang = $this->resolvePublicSourceLanguage($entity);
+    $previousLang = $this->resolvePublicSourceLanguage($original);
+    $languageChanged = $currentLang !== NULL && $previousLang !== NULL
+      ? $previousLang !== $currentLang
+      : $this->getSourceLanguageKey($entity) !== $this->getSourceLanguageKey($original);
+
+    return $previous['text'] !== $current['text']
+      || $previous['source_config_hash'] !== $current['source_config_hash']
+      || $languageChanged;
   }
 
   /**
@@ -477,9 +519,9 @@ class HearMeNodeAudioQueue {
   }
 
   /**
-   * Builds normalized node audio source data independent of queue enrollment.
+   * Extracts normalized public-safe text without provider metadata.
    */
-  protected function buildNodeAudioSource(EntityInterface $entity, ?string $providerId = NULL): ?array {
+  private function buildNodeTextSource(EntityInterface $entity): ?array {
     if ($entity->getEntityTypeId() !== 'node') {
       return NULL;
     }
@@ -510,14 +552,28 @@ class HearMeNodeAudioQueue {
       return NULL;
     }
 
+    $sourceConfigHash = $this->buildSourceConfigHash($entity->bundle(), $sourceConfig);
+    return [
+      'text' => $text,
+      'source_config_hash' => $sourceConfigHash,
+    ];
+  }
+
+  /**
+   * Adds provider-ready language and queue identity to public-safe text.
+   */
+  private function buildProviderReadySource(EntityInterface $entity, array $source, ?string $providerId = NULL, bool $throwOnUnavailable = FALSE): ?array {
     try {
       $providerId ??= $this->providerResolver->getActiveProviderId();
       $lang = $this->resolveSupportedNodeLanguage($entity, $providerId);
     }
-    catch (\RuntimeException) {
+    catch (\Throwable $e) {
       $this->logger->notice('HearMe: skipped queueing node @nid because no valid active provider is configured.', [
         '@nid' => $entity->id(),
       ]);
+      if ($throwOnUnavailable) {
+        throw new PersistentSynthesisUnavailableException('The queued synthesis provider is unavailable.', 0, $e);
+      }
       return NULL;
     }
     if ($lang === NULL) {
@@ -526,13 +582,12 @@ class HearMeNodeAudioQueue {
       ]);
       return NULL;
     }
-    $sourceConfigHash = $this->buildSourceConfigHash($entity->bundle(), $sourceConfig);
 
     return [
-      'text' => $text,
+      'text' => $source['text'],
       'lang' => $lang,
-      'content_hash' => $this->buildContentHash($text, $lang, $sourceConfigHash),
-      'source_config_hash' => $sourceConfigHash,
+      'content_hash' => $this->buildContentHash($source['text'], $lang, $source['source_config_hash']),
+      'source_config_hash' => $source['source_config_hash'],
     ];
   }
 
@@ -703,6 +758,30 @@ class HearMeNodeAudioQueue {
 
     $providerId ??= $this->providerResolver->getActiveProviderId();
     return $this->providerResolver->getDefaultLanguage($providerId);
+  }
+
+  /**
+   * Resolves language when possible without making source eligibility fail.
+   */
+  private function resolvePublicSourceLanguage(EntityInterface $entity): ?string {
+    try {
+      return $this->resolveSupportedNodeLanguage(
+        $entity,
+        $this->providerResolver->getActiveProviderId(),
+      );
+    }
+    catch (\Throwable) {
+      return NULL;
+    }
+  }
+
+  /**
+   * Builds a provider-independent key for detecting entity language changes.
+   */
+  private function getSourceLanguageKey(EntityInterface $entity): string {
+    return $this->usesProviderDefaultLanguage($entity)
+      ? 'provider-default'
+      : strtolower($entity->language()->getId());
   }
 
   /**

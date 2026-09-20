@@ -314,6 +314,48 @@ class HearMeQueueTest extends EntityKernelTestBase {
   }
 
   /**
+   * Tests provider discovery failure retains a real queued item for retry.
+   */
+  public function testProviderDiscoveryFailureRetainsQueuedItem(): void {
+    $this->createContentType('article', 'Article');
+    $this->createAudioReferenceField('article');
+    $this->config('hear_me.settings')
+      ->set('provider', 'test')
+      ->set('queue_bundles', ['article'])
+      ->set('tts_audio_field', 'field_tts_audio')
+      ->save();
+    $node = Node::create([
+      'type' => 'article',
+      'title' => 'Retry provider discovery',
+      'status' => 1,
+    ]);
+    $node->save();
+    $queue = \Drupal::queue('hear_me_tts');
+    $item = $queue->claimItem();
+    $this->assertNotFalse($item);
+    $worker = $this->container->get('plugin.manager.queue_worker')->createInstance('hear_me_tts');
+    $this->config('hear_me.settings')->set('provider', 'unknown')->save();
+
+    try {
+      $worker->processItem($item->data);
+      $this->fail('Provider discovery failure must delay the queue item.');
+    }
+    catch (DelayedRequeueException) {
+      $this->addToAssertionCount(1);
+    }
+
+    $this->assertTrue($this->container->get('hear_me.node_audio_queue')->isCurrentQueueItem(
+      (int) $item->data['nid'],
+      (string) $item->data['content_hash'],
+      (string) $item->data['token'],
+    ));
+    $this->config('hear_me.settings')->set('provider', 'test')->save();
+    $worker->processItem($item->data);
+    $queue->deleteItem($item);
+    $this->assertFalse($this->reloadNode($node)->get('field_tts_audio')->isEmpty());
+  }
+
+  /**
    * Tests marker cleanup lock contention delays rather than losing the item.
    */
   public function testMarkerCleanupLockContentionRequeuesItem(): void {
@@ -1242,6 +1284,143 @@ class HearMeQueueTest extends EntityKernelTestBase {
     );
     $this->assertNotNull(Media::load($media->id()));
     $this->assertSame(0, \Drupal::queue('hear_me_tts')->numberOfItems());
+  }
+
+  /**
+   * Tests provider readiness failures preserve unchanged generated audio.
+   */
+  public function testProviderReadinessFailuresPreserveGeneratedAudio(): void {
+    $this->createContentType('article', 'Article');
+    $this->createAudioReferenceField('article');
+    $cases = [
+      'missing' => ['provider' => NULL, 'uri' => 'public://tts/provider-missing.wav'],
+      'unknown' => ['provider' => 'unknown', 'uri' => 'public://tts/provider-unknown.wav'],
+      'invalid_endpoint' => ['provider' => 'piper', 'uri' => 'public://tts/provider-invalid-endpoint.wav'],
+      'unavailable' => ['provider' => 'test', 'uri' => 'public://tts/provider-unavailable.wav'],
+    ];
+    $nodes = [];
+    $media = [];
+    foreach ($cases as $case => $values) {
+      $title = 'Stable source ' . $case;
+      $media[$case] = $this->createAudioMedia($values['uri'], 'Generated audio ' . $case);
+      $this->markMediaAsGenerated($media[$case], $title);
+      $nodes[$case] = Node::create([
+        'type' => 'article',
+        'title' => $title,
+        'status' => 1,
+        'field_tts_audio' => ['target_id' => $media[$case]->id()],
+      ]);
+      $nodes[$case]->save();
+    }
+    $settings = $this->config('hear_me.settings')
+      ->set('queue_bundles', ['article'])
+      ->set('tts_audio_field', 'field_tts_audio');
+
+    foreach ($cases as $case => $values) {
+      if ($values['provider'] === NULL) {
+        $settings->clear('provider')->save();
+      }
+      else {
+        $settings->set('provider', $values['provider'])->save();
+      }
+      if ($case === 'invalid_endpoint') {
+        $this->config('hear_me.provider.piper')->set('endpoint', 'invalid endpoint')->save();
+      }
+      $this->container->get('state')->set('hear_me_test.provider_unavailable', $case === 'unavailable');
+
+      $nodes[$case]->setPromoted(TRUE)->save();
+
+      $this->assertSame(
+        (int) $media[$case]->id(),
+        (int) $this->reloadNode($nodes[$case])->get('field_tts_audio')->target_id,
+        "Provider readiness case $case must preserve valid generated audio.",
+      );
+      $this->assertNotNull(Media::load($media[$case]->id()));
+    }
+  }
+
+  /**
+   * Tests provider language aliases do not retract unchanged generated audio.
+   */
+  public function testProviderLanguageAliasPreservesGeneratedAudio(): void {
+    ConfigurableLanguage::createFromLangcode('en-gb')->save();
+    $this->createContentType('article', 'Article');
+    $this->createAudioReferenceField('article');
+    $media = $this->createAudioMedia('public://tts/provider-language-alias.wav', 'Alias audio');
+    $this->markMediaAsGenerated($media, 'Alias source', 'en');
+    $node = Node::create([
+      'type' => 'article',
+      'title' => 'Alias source',
+      'langcode' => 'en-gb',
+      'status' => 1,
+      'field_tts_audio' => ['target_id' => $media->id()],
+    ]);
+    $node->save();
+    $this->config('hear_me.settings')
+      ->set('provider', 'test')
+      ->set('queue_bundles', ['article'])
+      ->set('tts_audio_field', 'field_tts_audio')
+      ->save();
+
+    $node->setPromoted(TRUE)->save();
+
+    $this->assertSame((int) $media->id(), (int) $this->reloadNode($node)->get('field_tts_audio')->target_id);
+    $this->assertSame(0, \Drupal::queue('hear_me_tts')->numberOfItems());
+
+    $this->config('hear_me.settings')->clear('provider')->save();
+    $node->setSticky(TRUE)->save();
+
+    $this->assertSame((int) $media->id(), (int) $this->reloadNode($node)->get('field_tts_audio')->target_id);
+    $this->assertSame(0, \Drupal::queue('hear_me_tts')->numberOfItems());
+  }
+
+  /**
+   * Tests definitive source state changes retract without provider readiness.
+   */
+  public function testDefinitiveSourceChangesRetractWithoutProvider(): void {
+    $this->createContentType('article', 'Article');
+    $this->createAudioReferenceField('article');
+    $textMedia = $this->createAudioMedia('public://tts/missing-provider-text.wav', 'Text change audio');
+    $this->markMediaAsGenerated($textMedia, 'Original source');
+    $textNode = Node::create([
+      'type' => 'article',
+      'title' => 'Original source',
+      'status' => 1,
+      'field_tts_audio' => ['target_id' => $textMedia->id()],
+    ]);
+    $textNode->save();
+    $languageMedia = $this->createAudioMedia('public://tts/missing-provider-language.wav', 'Language change audio');
+    $this->markMediaAsGenerated($languageMedia, 'Stable source', 'en');
+    $languageNode = Node::create([
+      'type' => 'article',
+      'title' => 'Stable source',
+      'langcode' => 'en',
+      'status' => 1,
+      'field_tts_audio' => ['target_id' => $languageMedia->id()],
+    ]);
+    $languageNode->save();
+    $unpublishedMedia = $this->createAudioMedia('public://tts/missing-provider-unpublished.wav', 'Unpublished audio');
+    $this->markMediaAsGenerated($unpublishedMedia, 'Published source');
+    $unpublishedNode = Node::create([
+      'type' => 'article',
+      'title' => 'Published source',
+      'status' => 1,
+      'field_tts_audio' => ['target_id' => $unpublishedMedia->id()],
+    ]);
+    $unpublishedNode->save();
+    $this->config('hear_me.settings')
+      ->clear('provider')
+      ->set('queue_bundles', ['article'])
+      ->set('tts_audio_field', 'field_tts_audio')
+      ->save();
+
+    $textNode->setTitle('Changed source')->save();
+    $languageNode->set('langcode', 'und')->save();
+    $unpublishedNode->setUnpublished()->save();
+
+    $this->assertTrue($this->reloadNode($textNode)->get('field_tts_audio')->isEmpty());
+    $this->assertTrue($this->reloadNode($languageNode)->get('field_tts_audio')->isEmpty());
+    $this->assertTrue($this->reloadNode($unpublishedNode)->get('field_tts_audio')->isEmpty());
   }
 
   /**

@@ -30,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Persistent synthesis now succeeds only with durable `entity` provenance linked to the exact File ID used by Media, retries File/provenance/Media persistence failures, rolls back unowned failed-attempt files while preserving adopted files, rejects incomplete cache hits without URI-based ownership inference, and separates public source eligibility from provider readiness so provider or persistence outages alone do not retract valid attached audio.
 - Formatted queue source items now run through their stored Drupal text formats as an anonymous visitor before plain-text normalization and hashing. Filtered-out values cannot reach synthesis, empty/unavailable formats and filter failures fail closed without raw-text fallback, and plain string fields keep their direct path.
 - Simplified queue ownership to one durable generation token and a module-owned key-value collection, removed attempt leases, separated queued/duplicate/failed publication outcomes, and added cron repair for retained backend-publication failures.
 - Reviewed and froze the intended first-release queue, generated-Media, Piper security, uninstall, and optional Drush contracts; unresolved release blockers are documented for separate verification gates.
@@ -50,7 +51,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Generated-audio lifecycle updates honor both generated-replacement and manual-overwrite settings while always retracting generated public audio from ineligible content.
 - Expired or evicted runtime cache entries stop serving immediately, while Files adopted by other Drupal components are preserved and never overwritten during regeneration.
 - Generated-media replacement uses cache provenance instead of public directory names, preserving editor uploads under `public://tts/`.
-- Generated public audio is detached when a node becomes ineligible or is deleted. The D10.1 review blocks release until provenance is fail-closed and Media/File deletion checks retained revisions as well as current references.
+- Generated public audio is detached when a node becomes definitively ineligible or its public source/language changes under the replacement policy. Provider readiness failures preserve otherwise valid audio. Media/File deletion still requires D10.6 revision-safe reference checks.
 - The Piper adapter bounds non-empty `audio/wav` reads, fails closed on unresolved hostnames, validates resolved endpoint addresses, blocks metadata infrastructure destinations, and redacts transport failures. The D10.1 review found that effective cURL pinning and response validation still require D10.8 correction and integration testing.
 - Piper language settings preserve exact external voice-registry keys while matching administrator input across case and underscore/hyphen variants; D10.8 must remove the pre-release language-tag-shaped restriction and verify bounded opaque registry keys.
 - The TTS endpoint now requires a JSON media type, uses a bounded request-body read, and rejects structured values where strings are required.

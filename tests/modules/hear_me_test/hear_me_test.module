@@ -25,9 +25,32 @@ function hear_me_test_entity_field_access(string $operation, FieldDefinitionInte
  * Implements hook_file_presave().
  */
 function hear_me_test_file_presave(FileInterface $file): void {
-  if (\Drupal::state()->get('hear_me_test.fail_file_save', FALSE)) {
-    throw new \RuntimeException('Simulated File save failure.');
+  $remainingFailures = (int) \Drupal::state()->get('hear_me_test.fail_file_save_count', 0);
+  if ($remainingFailures > 0) {
+    \Drupal::state()->set('hear_me_test.fail_file_save_count', $remainingFailures - 1);
+    throw new \RuntimeException('Simulated one-shot File save failure.');
   }
+}
+
+/**
+ * Implements hook_file_insert().
+ */
+function hear_me_test_file_insert(FileInterface $file): void {
+  if (!\Drupal::state()->get('hear_me_test.fail_provenance_merge', FALSE)) {
+    return;
+  }
+  \Drupal::state()->set('hear_me_test.fail_provenance_merge', FALSE);
+
+  if (\Drupal::state()->get('hear_me_test.adopt_file_before_merge_failure', FALSE)) {
+    $media = \Drupal::entityTypeManager()->getStorage('media')->create([
+      'bundle' => 'hear_me_audio',
+      'name' => 'Adopted before provenance failure',
+      'field_hear_me_audio_file' => ['target_id' => $file->id()],
+    ]);
+    $media->save();
+  }
+
+  \Drupal::database()->schema()->dropTable('hear_me_audio_cache');
 }
 
 /**

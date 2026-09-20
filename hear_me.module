@@ -13,8 +13,8 @@ function hear_me_entity_presave(EntityInterface $entity): void {
 
   $nodeAudioQueue = \Drupal::service('hear_me.node_audio_queue');
   $attacher = \Drupal::service('hear_me.node_audio_attacher');
-  $queueItem = $nodeAudioQueue->buildQueueItem($entity);
-  if ($attacher->shouldRetractGeneratedAudio($entity, $queueItem)) {
+  $publicSource = $nodeAudioQueue->buildPublicAudioSource($entity);
+  if ($attacher->shouldRetractGeneratedAudio($entity, $publicSource)) {
     $attacher->removeGeneratedAudioReferences($entity);
   }
 }

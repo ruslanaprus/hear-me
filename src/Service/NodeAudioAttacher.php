@@ -264,9 +264,9 @@ final class NodeAudioAttacher {
   /**
    * Checks generated attachments against the current public-safe source text.
    */
-  public function generatedAudioMatchesSource(NodeInterface $node, string $text, string $lang): bool {
+  public function generatedAudioMatchesSource(NodeInterface $node, string $text, ?string $lang): bool {
     $expectedHash = hash('sha256', $text);
-    $expectedLang = strtolower($lang);
+    $expectedLang = $lang === NULL ? NULL : strtolower($lang);
     $mediaStorage = $this->entityTypeManager->getStorage('media');
     foreach ($this->getGeneratedMediaIds($node) as $mediaId) {
       $media = $mediaStorage->load($mediaId);
@@ -275,7 +275,9 @@ final class NodeAudioAttacher {
       }
       foreach ($this->getFieldTargetIds($media->get('field_hear_me_audio_file')->getValue()) as $fileId) {
         $source = $this->cacheManager->getPersistentGeneratedFileSource($fileId);
-        if ($source === NULL || $source['text_hash'] !== $expectedHash || $source['langcode'] !== $expectedLang) {
+        if ($source === NULL
+          || $source['text_hash'] !== $expectedHash
+          || ($expectedLang !== NULL && $source['langcode'] !== $expectedLang)) {
           return FALSE;
         }
       }
@@ -287,14 +289,17 @@ final class NodeAudioAttacher {
   /**
    * Checks whether attached generated audio must be retracted before a save.
    */
-  public function shouldRetractGeneratedAudio(NodeInterface $node, ?array $queueItem): bool {
-    if ($queueItem === NULL) {
+  public function shouldRetractGeneratedAudio(NodeInterface $node, ?array $publicSource): bool {
+    if ($publicSource === NULL) {
       return TRUE;
     }
     if (!($this->configFactory->get('hear_me.settings')->get('replace_existing_generated_audio') ?? TRUE)) {
       return FALSE;
     }
-    return !$this->generatedAudioMatchesSource($node, $queueItem['text'], $queueItem['lang']);
+    if ($publicSource['lang'] === NULL && ($publicSource['language_changed'] ?? FALSE)) {
+      return TRUE;
+    }
+    return !$this->generatedAudioMatchesSource($node, $publicSource['text'], $publicSource['lang']);
   }
 
   /**
@@ -345,11 +350,12 @@ final class NodeAudioAttacher {
       }
 
       $this->entityTypeManager->getAccessControlHandler('node')->resetCache();
-      $queueItem = $this->nodeAudioQueue->buildQueueItem($node);
+      $publicSource = $this->nodeAudioQueue->buildPublicAudioSource($node);
       $generatedMediaIds = $this->getGeneratedMediaIds($node);
       if (!$generatedMediaIds) {
         $overwriteManual = $this->configFactory->get('hear_me.settings')->get('overwrite_manual_audio') ?? FALSE;
-        if ($queueIfMissing && $queueItem !== NULL && (!$this->getFieldTargetIdsForNode($node) || $overwriteManual)) {
+        $queueItem = $queueIfMissing ? $this->nodeAudioQueue->buildQueueItem($node) : NULL;
+        if ($queueItem !== NULL && (!$this->getFieldTargetIdsForNode($node) || $overwriteManual)) {
           if ($this->nodeAudioQueue->queueItem($queueItem) === HearMeNodeAudioQueue::RESULT_FAILED) {
             $this->logger->warning('HearMe: updated audio queue publication failed for node @nid. Cron will retry any retained pending marker.', [
               '@nid' => $nid,
@@ -358,10 +364,10 @@ final class NodeAudioAttacher {
         }
         return;
       }
-      if ($queueItem !== NULL && $this->generatedAudioMatchesSource($node, $queueItem['text'], $queueItem['lang'])) {
+      if ($publicSource !== NULL && $this->generatedAudioMatchesSource($node, $publicSource['text'], $publicSource['lang'])) {
         return;
       }
-      if ($queueItem !== NULL && !($this->configFactory->get('hear_me.settings')->get('replace_existing_generated_audio') ?? TRUE)) {
+      if ($publicSource !== NULL && !($this->configFactory->get('hear_me.settings')->get('replace_existing_generated_audio') ?? TRUE)) {
         return;
       }
 

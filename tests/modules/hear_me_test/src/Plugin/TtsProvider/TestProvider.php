@@ -23,6 +23,9 @@ class TestProvider extends PluginBase implements TtsProviderInterface {
    * {@inheritdoc}
    */
   public function synthesize(string $text, string $lang): ?TtsSynthesisResult {
+    if (\Drupal::state()->get('hear_me_test.provider_unavailable', FALSE)) {
+      return NULL;
+    }
     return new TtsSynthesisResult('test-audio:' . $lang . ':' . $text, 'audio/wav', 'wav');
   }
 

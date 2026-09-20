@@ -49,19 +49,38 @@ class HearMeService {
    * to content.
    *
    * @throws \Drupal\hear_me\Exception\PersistentSynthesisUnavailableException
-   *   When provider discovery or persistent cache storage is temporarily
-   *   unavailable.
+   *   When provider discovery, persistent File/provenance storage, or Media
+   *   persistence is temporarily unavailable.
    */
   public function synthesize(string $text, string $lang, ?string $providerId = NULL): ?MediaInterface {
-    $audio = $this->generateAudio($text, $lang, 'entity', TRUE, $providerId);
+    try {
+      $audio = $this->generateAudio($text, $lang, 'entity', TRUE, $providerId);
+    }
+    catch (PersistentSynthesisUnavailableException $e) {
+      throw $e;
+    }
+    catch (\Throwable $e) {
+      $this->logger->error('HearMe: persistent synthesis infrastructure failed (@type).', [
+        '@type' => $e::class,
+      ]);
+      throw new PersistentSynthesisUnavailableException('Persistent synthesis infrastructure is unavailable.', 0, $e);
+    }
     if ($audio === NULL) {
       return NULL;
     }
-    if ($audio->uri === NULL) {
+    if ($audio->uri === NULL || $audio->fid === NULL || $audio->fid <= 0) {
       throw new PersistentSynthesisUnavailableException('Synthesized audio could not be persisted.');
     }
 
-    return $this->audioMediaFactory->createFromUri($audio->uri, $lang, $text);
+    try {
+      return $this->audioMediaFactory->createFromFile($audio->fid, $audio->uri, $lang, $text);
+    }
+    catch (\Throwable $e) {
+      $this->logger->error('HearMe: persistent audio entities could not be created (@type).', [
+        '@type' => $e::class,
+      ]);
+      throw new PersistentSynthesisUnavailableException('Synthesized audio entities could not be persisted.', 0, $e);
+    }
   }
 
   /**
@@ -158,17 +177,28 @@ class HearMeService {
         return new TtsAudioResult($result->bytes, $result->mimeType, $result->extension);
       }
 
-      return $this->cacheManager->saveAudio(
-        $cid,
-        $uri,
-        $source,
-        $providerKey,
-        $lang,
-        $text,
-        $providerConfigHash,
-        $result,
-        $ttl,
-      );
+      try {
+        return $this->cacheManager->saveAudio(
+          $cid,
+          $uri,
+          $source,
+          $providerKey,
+          $lang,
+          $text,
+          $providerConfigHash,
+          $result,
+          $ttl,
+        );
+      }
+      catch (\Throwable $e) {
+        if ($forcePersistent) {
+          $this->logger->error('HearMe: persistent audio metadata could not be saved (@type).', [
+            '@type' => $e::class,
+          ]);
+          throw new PersistentSynthesisUnavailableException('Synthesized audio metadata could not be persisted.', 0, $e);
+        }
+        throw $e;
+      }
     }
     finally {
       if ($lockAcquired) {

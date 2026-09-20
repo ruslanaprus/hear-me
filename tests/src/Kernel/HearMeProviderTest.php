@@ -203,17 +203,164 @@ class HearMeProviderTest extends KernelTestBase {
 
     $cacheRow = $this->container->get('database')
       ->select('hear_me_audio_cache', 'c')
-      ->fields('c', ['uri', 'source'])
+      ->fields('c', ['uri', 'fid', 'source'])
       ->execute()
       ->fetchAssoc();
     $this->assertSame([
       'uri' => $file->getFileUri(),
+      'fid' => (string) $file->id(),
       'source' => 'entity',
     ], $cacheRow);
+    $this->assertTrue($this->container->get('hear_me.cache_manager')->isPersistentGeneratedFile((int) $file->id()));
 
     $reusedMedia = $service->synthesize('Persistent characterization', 'en', 'test');
     $this->assertInstanceOf(MediaInterface::class, $reusedMedia);
     $this->assertSame((int) $media->id(), (int) $reusedMedia->id());
+  }
+
+  /**
+   * Tests File provenance failure prevents Media success and is retryable.
+   */
+  public function testPersistentSynthesisRetriesAfterFileProvenanceFailure(): void {
+    $this->config('hear_me.settings')->set('provider', 'test')->save();
+    $this->container->get('state')->set('hear_me_test.fail_file_save_count', 1);
+    $service = $this->container->get('hear_me.service');
+
+    try {
+      $service->synthesize('Retry File provenance', 'en', 'test');
+      $this->fail('Persistent synthesis must fail until File provenance is durable.');
+    }
+    catch (PersistentSynthesisUnavailableException) {
+      $this->addToAssertionCount(1);
+    }
+
+    $this->assertSame(0, $this->countEntities('media'));
+    $this->assertSame(0, (int) $this->container->get('database')
+      ->select('hear_me_audio_cache', 'c')
+      ->condition('source', 'entity')
+      ->countQuery()
+      ->execute()
+      ->fetchField());
+    $files = $this->container->get('file_system')->scanDirectory('public://tts', '/.*/');
+    $this->assertSame([], $files, 'A failed File entity save leaves no unmanaged public audio bytes.');
+
+    $media = $service->synthesize('Retry File provenance', 'en', 'test');
+    $this->assertInstanceOf(MediaInterface::class, $media);
+    $fileId = (int) $media->get('field_hear_me_audio_file')->target_id;
+    $storedFileId = (int) $this->container->get('database')
+      ->select('hear_me_audio_cache', 'c')
+      ->fields('c', ['fid'])
+      ->condition('source', 'entity')
+      ->execute()
+      ->fetchField();
+    $this->assertGreaterThan(0, $fileId);
+    $this->assertSame($fileId, $storedFileId);
+  }
+
+  /**
+   * Tests Media persistence failure keeps exact File provenance for retry.
+   */
+  public function testPersistentSynthesisRetriesAfterMediaFailure(): void {
+    $this->config('hear_me.settings')->set('provider', 'test')->save();
+    $this->container->get('state')->set('hear_me_test.fail_media_save', TRUE);
+    $service = $this->container->get('hear_me.service');
+
+    try {
+      $service->synthesize('Retry Media persistence', 'en', 'test');
+      $this->fail('Persistent synthesis must report Media persistence as retryable.');
+    }
+    catch (PersistentSynthesisUnavailableException) {
+      $this->addToAssertionCount(1);
+    }
+
+    $this->assertSame(0, $this->countEntities('media'));
+    $storedFileId = (int) $this->container->get('database')
+      ->select('hear_me_audio_cache', 'c')
+      ->fields('c', ['fid'])
+      ->condition('source', 'entity')
+      ->execute()
+      ->fetchField();
+    $this->assertGreaterThan(0, $storedFileId);
+
+    $this->container->get('state')->set('hear_me_test.fail_media_save', FALSE);
+    $media = $service->synthesize('Retry Media persistence', 'en', 'test');
+    $this->assertInstanceOf(MediaInterface::class, $media);
+    $this->assertSame($storedFileId, (int) $media->get('field_hear_me_audio_file')->target_id);
+  }
+
+  /**
+   * Tests provenance failure rolls back an otherwise unowned File and bytes.
+   */
+  public function testProvenanceFailureRollsBackUnownedFile(): void {
+    $this->config('hear_me.settings')->set('provider', 'test')->save();
+    $this->container->get('state')->set('hear_me_test.fail_provenance_merge', TRUE);
+
+    try {
+      $this->container->get('hear_me.service')->synthesize('Rollback provenance', 'en', 'test');
+      $this->fail('Persistent synthesis must fail when provenance cannot be saved.');
+    }
+    catch (PersistentSynthesisUnavailableException) {
+      $this->addToAssertionCount(1);
+    }
+
+    $this->assertSame(0, $this->countEntities('file'));
+    $this->assertSame(0, $this->countEntities('media'));
+    $this->assertSame([], $this->container->get('file_system')->scanDirectory('public://tts', '/.*/'));
+  }
+
+  /**
+   * Tests provenance rollback preserves a File adopted during persistence.
+   */
+  public function testProvenanceFailurePreservesAdoptedFile(): void {
+    $this->config('hear_me.settings')->set('provider', 'test')->save();
+    $state = $this->container->get('state');
+    $state->set('hear_me_test.fail_provenance_merge', TRUE);
+    $state->set('hear_me_test.adopt_file_before_merge_failure', TRUE);
+
+    try {
+      $this->container->get('hear_me.service')->synthesize('Adopted provenance', 'en', 'test');
+      $this->fail('Persistent synthesis must fail when provenance cannot be saved.');
+    }
+    catch (PersistentSynthesisUnavailableException) {
+      $this->addToAssertionCount(1);
+    }
+
+    $this->assertSame(1, $this->countEntities('media'));
+    $mediaEntities = $this->container->get('entity_type.manager')->getStorage('media')->loadMultiple();
+    $media = reset($mediaEntities);
+    $this->assertInstanceOf(MediaInterface::class, $media);
+    $file = $media->get('field_hear_me_audio_file')->entity;
+    $this->assertNotNull($file);
+    $this->assertStringStartsWith('public://tts/', $file->getFileUri());
+    $this->assertCount(1, $this->container->get('file_system')->scanDirectory('public://tts', '/.*/'));
+  }
+
+  /**
+   * Tests incomplete entity provenance is never repaired by URI inference.
+   */
+  public function testIncompletePersistentProvenanceIsRegenerated(): void {
+    $this->config('hear_me.settings')->set('provider', 'test')->save();
+    $service = $this->container->get('hear_me.service');
+    $firstMedia = $service->synthesize('Incomplete provenance', 'en', 'test');
+    $this->assertInstanceOf(MediaInterface::class, $firstMedia);
+    $firstFileId = (int) $firstMedia->get('field_hear_me_audio_file')->target_id;
+    $this->container->get('database')->update('hear_me_audio_cache')
+      ->fields(['fid' => NULL])
+      ->condition('source', 'entity')
+      ->execute();
+
+    $replacementMedia = $service->synthesize('Incomplete provenance', 'en', 'test');
+
+    $this->assertInstanceOf(MediaInterface::class, $replacementMedia);
+    $replacementFileId = (int) $replacementMedia->get('field_hear_me_audio_file')->target_id;
+    $this->assertNotSame((int) $firstMedia->id(), (int) $replacementMedia->id());
+    $this->assertNotSame($firstFileId, $replacementFileId);
+    $this->assertSame($replacementFileId, (int) $this->container->get('database')
+      ->select('hear_me_audio_cache', 'c')
+      ->fields('c', ['fid'])
+      ->condition('source', 'entity')
+      ->execute()
+      ->fetchField());
   }
 
   /**
@@ -389,6 +536,28 @@ class HearMeProviderTest extends KernelTestBase {
       'HearMe: the "default_lang" key is missing from hear_me.provider.unknown configuration.'
     );
     $resolver->getSupportedLanguages('unknown');
+  }
+
+  /**
+   * Tests persistent synthesis wraps missing active-provider configuration.
+   */
+  public function testPersistentSynthesisWrapsMissingProviderConfiguration(): void {
+    $this->config('hear_me.settings')->clear('provider')->save();
+
+    $this->expectException(PersistentSynthesisUnavailableException::class);
+    $this->container->get('hear_me.service')->synthesize('Missing provider', 'en');
+  }
+
+  /**
+   * Counts stored entities without access checks.
+   */
+  private function countEntities(string $entityTypeId): int {
+    return (int) $this->container->get('entity_type.manager')
+      ->getStorage($entityTypeId)
+      ->getQuery()
+      ->accessCheck(FALSE)
+      ->count()
+      ->execute();
   }
 
 }

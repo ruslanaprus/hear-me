@@ -52,14 +52,14 @@ class AudioMediaFactoryTest extends KernelTestBase {
   }
 
   /**
-   * Tests new File and Media creation, language, and naming behavior.
+   * Tests Media creation for an exact managed File, language, and naming.
    */
-  public function testCreatesFileAndNamedMedia(): void {
+  public function testCreatesNamedMediaForFile(): void {
     $uri = 'public://tts/new-audio.wav';
     $text = 'Factory naming text';
     ConfigurableLanguage::createFromLangcode('uk')->save();
 
-    $media = $this->createMediaFromUri($uri, 'uk', $text);
+    $media = $this->createMediaForUriFixture($uri, 'uk', $text);
 
     $this->assertInstanceOf(MediaInterface::class, $media);
     $this->assertSame('hear_me_audio', $media->bundle());
@@ -77,7 +77,7 @@ class AudioMediaFactoryTest extends KernelTestBase {
    * Tests unknown synthesis languages use language-neutral Media metadata.
    */
   public function testUnknownSynthesisLanguageUsesUnd(): void {
-    $media = $this->createMediaFromUri(
+    $media = $this->createMediaForUriFixture(
       'public://tts/provider-language.wav',
       'provider-voice',
       'Provider language',
@@ -93,7 +93,7 @@ class AudioMediaFactoryTest extends KernelTestBase {
   public function testNormalizesInstalledSynthesisLanguage(): void {
     ConfigurableLanguage::createFromLangcode('en-us')->save();
 
-    $media = $this->createMediaFromUri(
+    $media = $this->createMediaForUriFixture(
       'public://tts/regional-language.wav',
       'EN_US',
       'Regional language',
@@ -104,17 +104,22 @@ class AudioMediaFactoryTest extends KernelTestBase {
   }
 
   /**
-   * Tests an existing managed File is reused.
+   * Tests the exact File ID wins when multiple Files share a URI.
    */
-  public function testReusesExistingFile(): void {
-    $uri = 'public://tts/existing-file.wav';
-    $file = File::create(['uri' => $uri, 'status' => 1]);
-    $file->save();
+  public function testUsesExactFileWhenUriIsShared(): void {
+    $uri = 'public://tts/shared-uri.wav';
+    $firstFile = File::create(['uri' => $uri, 'status' => 1]);
+    $firstFile->save();
+    $exactFile = File::create(['uri' => $uri, 'status' => 1]);
+    $exactFile->save();
+    $factory = $this->container->get('hear_me.audio_media_factory');
+    $this->assertInstanceOf(AudioMediaFactory::class, $factory);
 
-    $media = $this->createMediaFromUri($uri, 'en', 'Existing File');
+    $media = $factory->createFromFile((int) $exactFile->id(), $uri, 'en', 'Exact File');
 
-    $this->assertSame((int) $file->id(), (int) $media->get('field_hear_me_audio_file')->target_id);
-    $this->assertSame(1, $this->countEntities('file', ['uri' => $uri]));
+    $this->assertSame((int) $exactFile->id(), (int) $media->get('field_hear_me_audio_file')->target_id);
+    $this->assertNotSame((int) $firstFile->id(), (int) $media->get('field_hear_me_audio_file')->target_id);
+    $this->assertSame(2, $this->countEntities('file', ['uri' => $uri]));
     $this->assertSame(1, $this->countEntities('media'));
   }
 
@@ -132,7 +137,7 @@ class AudioMediaFactoryTest extends KernelTestBase {
     ]);
     $existing->save();
 
-    $media = $this->createMediaFromUri($uri, 'fr', 'Different text');
+    $media = $this->createMediaForUriFixture($uri, 'fr', 'Different text');
 
     $this->assertSame((int) $existing->id(), (int) $media->id());
     $this->assertSame('Existing media name', $media->label());
@@ -175,7 +180,7 @@ class AudioMediaFactoryTest extends KernelTestBase {
     ]);
     $foreignMedia->save();
 
-    $media = $this->createMediaFromUri($uri, 'en', 'HearMe media');
+    $media = $this->createMediaForUriFixture($uri, 'en', 'HearMe media');
 
     $this->assertNotSame((int) $foreignMedia->id(), (int) $media->id());
     $this->assertSame('hear_me_audio', $media->bundle());
@@ -184,20 +189,28 @@ class AudioMediaFactoryTest extends KernelTestBase {
   }
 
   /**
-   * Tests a File persistence failure propagates without creating entities.
+   * Tests Media creation rejects missing and mismatched provenance Files.
    */
-  public function testFilePersistenceFailurePropagates(): void {
-    $this->container->get('state')->set('hear_me_test.fail_file_save', TRUE);
-
+  public function testRejectsMissingOrMismatchedFile(): void {
+    $factory = $this->container->get('hear_me.audio_media_factory');
+    $this->assertInstanceOf(AudioMediaFactory::class, $factory);
     try {
-      $this->createMediaFromUri('public://tts/file-failure.wav', 'en', 'File failure');
-      $this->fail('Expected the File save exception to propagate.');
+      $factory->createFromFile(999, 'public://tts/missing.wav', 'en', 'Missing File');
+      $this->fail('Expected a missing provenance File to be rejected.');
     }
-    catch (EntityStorageException $exception) {
-      $this->assertSame('Simulated File save failure.', $exception->getPrevious()?->getMessage());
+    catch (\UnexpectedValueException) {
+      $this->addToAssertionCount(1);
     }
 
-    $this->assertSame(0, $this->countEntities('file', ['uri' => 'public://tts/file-failure.wav']));
+    $file = File::create(['uri' => 'public://tts/actual.wav', 'status' => 1]);
+    $file->save();
+    try {
+      $factory->createFromFile((int) $file->id(), 'public://tts/different.wav', 'en', 'Mismatched File');
+      $this->fail('Expected a mismatched provenance URI to be rejected.');
+    }
+    catch (\UnexpectedValueException) {
+      $this->addToAssertionCount(1);
+    }
     $this->assertSame(0, $this->countEntities('media'));
   }
 
@@ -208,7 +221,7 @@ class AudioMediaFactoryTest extends KernelTestBase {
     $this->container->get('state')->set('hear_me_test.fail_media_save', TRUE);
 
     try {
-      $this->createMediaFromUri('public://tts/media-failure.wav', 'en', 'Media failure');
+      $this->createMediaForUriFixture('public://tts/media-failure.wav', 'en', 'Media failure');
       $this->fail('Expected the Media save exception to propagate.');
     }
     catch (EntityStorageException $exception) {
@@ -222,10 +235,18 @@ class AudioMediaFactoryTest extends KernelTestBase {
   /**
    * Creates Media through the focused factory service.
    */
-  private function createMediaFromUri(string $uri, string $lang, string $text): MediaInterface {
+  private function createMediaForUriFixture(string $uri, string $lang, string $text): MediaInterface {
     $factory = $this->container->get('hear_me.audio_media_factory');
     $this->assertInstanceOf(AudioMediaFactory::class, $factory);
-    $media = $factory->createFromUri($uri, $lang, $text);
+    $files = $this->container->get('entity_type.manager')
+      ->getStorage('file')
+      ->loadByProperties(['uri' => $uri]);
+    $file = $files ? reset($files) : File::create(['uri' => $uri, 'status' => 1]);
+    $this->assertInstanceOf(File::class, $file);
+    if ($file->isNew()) {
+      $file->save();
+    }
+    $media = $factory->createFromFile((int) $file->id(), $uri, $lang, $text);
     $this->assertInstanceOf(MediaInterface::class, $media);
     return $media;
   }

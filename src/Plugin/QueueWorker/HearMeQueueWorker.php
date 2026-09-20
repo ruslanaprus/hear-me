@@ -82,12 +82,23 @@ class HearMeQueueWorker extends QueueWorkerBase implements ContainerFactoryPlugi
       return;
     }
 
-    $providerId = $this->providerResolver->getActiveProviderId();
     if (!$this->nodeAudioQueue->isCurrentQueueItem($nid, $queuedHash, $token)) {
       return;
     }
 
-    $current = $this->nodeAudioQueue->buildCurrentQueueItem($nid, $providerId);
+    try {
+      $providerId = $this->providerResolver->getActiveProviderId();
+    }
+    catch (\RuntimeException $e) {
+      throw new DelayedRequeueException(60, 'HearMe provider discovery is unavailable; the queue item will be retried.', 0, $e);
+    }
+
+    try {
+      $current = $this->nodeAudioQueue->buildCurrentQueueItem($nid, $providerId);
+    }
+    catch (PersistentSynthesisUnavailableException $e) {
+      throw new DelayedRequeueException(60, 'HearMe provider discovery is unavailable; the queue item will be retried.', 0, $e);
+    }
     if ($current === NULL) {
       $this->clearQueuedHash($nid, $queuedHash, $token);
       return;
@@ -115,7 +126,12 @@ class HearMeQueueWorker extends QueueWorkerBase implements ContainerFactoryPlugi
       throw new DelayedRequeueException(60, 'HearMe synthesis failed; the queue item will be retried.');
     }
 
-    $latest = $this->nodeAudioQueue->buildCurrentQueueItem($nid, $providerId);
+    try {
+      $latest = $this->nodeAudioQueue->buildCurrentQueueItem($nid, $providerId);
+    }
+    catch (PersistentSynthesisUnavailableException $e) {
+      throw new DelayedRequeueException(60, 'HearMe provider discovery is unavailable; the queue item will be retried.', 0, $e);
+    }
     if ($latest !== NULL && hash_equals($latest['content_hash'], $queuedHash)) {
       try {
         if (!$this->nodeAudioAttacher->attach($nid, $media, $queuedHash, $token)) {

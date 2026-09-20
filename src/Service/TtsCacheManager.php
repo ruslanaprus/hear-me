@@ -173,6 +173,13 @@ final class TtsCacheManager {
       return NULL;
     }
 
+    if ((string) $row->source === 'entity' && !$this->hasValidPersistentFile($row)) {
+      $this->logger->warning('HearMe: ignored incomplete persistent audio provenance for cache item @cid.', [
+        '@cid' => $cid,
+      ]);
+      return NULL;
+    }
+
     $now = $this->time->getRequestTime();
     if ((int) $row->expires > 0 && (int) $row->expires <= $now) {
       $this->deleteRows([$row]);
@@ -246,31 +253,44 @@ final class TtsCacheManager {
       return new TtsAudioResult($result->bytes, $result->mimeType, $result->extension);
     }
 
-    $fid = $this->ensureFileEntity($savedUri);
+    $fileResult = $this->ensureFileEntity($savedUri);
+    $fid = $fileResult['fid'];
+    if ($source === 'entity' && $fid === NULL) {
+      $this->deleteUnmanagedAudioFile($savedUri);
+      return new TtsAudioResult($result->bytes, $result->mimeType, $result->extension);
+    }
     $now = $this->time->getRequestTime();
     $expires = $ttl > 0 ? $now + $ttl : 0;
     $filesize = strlen($result->bytes);
 
-    $this->database->merge('hear_me_audio_cache')
-      ->key('cid', $cid)
-      ->fields([
-        'uri' => $savedUri,
-        'fid' => $fid,
-        'source' => $source,
-        'provider' => $providerKey,
-        'langcode' => strtolower($lang),
-        'text_hash' => hash('sha256', $text),
-        'config_hash' => $providerConfigHash,
-        'extension' => $this->sanitizeExtension($result->extension),
-        'mime_type' => $result->mimeType,
-        'filesize' => $filesize,
-        'created' => $now,
-        'changed' => $now,
-        'last_accessed' => $now,
-        'expires' => $expires,
-        'access_count' => 0,
-      ])
-      ->execute();
+    try {
+      $this->database->merge('hear_me_audio_cache')
+        ->key('cid', $cid)
+        ->fields([
+          'uri' => $savedUri,
+          'fid' => $fid,
+          'source' => $source,
+          'provider' => $providerKey,
+          'langcode' => strtolower($lang),
+          'text_hash' => hash('sha256', $text),
+          'config_hash' => $providerConfigHash,
+          'extension' => $this->sanitizeExtension($result->extension),
+          'mime_type' => $result->mimeType,
+          'filesize' => $filesize,
+          'created' => $now,
+          'changed' => $now,
+          'last_accessed' => $now,
+          'expires' => $expires,
+          'access_count' => 0,
+        ])
+        ->execute();
+    }
+    catch (\Throwable $e) {
+      if ($source === 'entity' && $fileResult['created']) {
+        $this->deleteCreatedFileEntity($fid, $savedUri);
+      }
+      throw $e;
+    }
 
     if ($source !== 'entity') {
       $this->cleanup();
@@ -535,12 +555,15 @@ final class TtsCacheManager {
     return count($cids);
   }
 
-  protected function ensureFileEntity(string $uri): ?int {
+  protected function ensureFileEntity(string $uri): array {
     try {
       $fileStorage = $this->entityTypeManager->getStorage('file');
       $files = $fileStorage->loadByProperties(['uri' => $uri]);
       if ($files) {
-        return (int) reset($files)->id();
+        return [
+          'fid' => (int) reset($files)->id(),
+          'created' => FALSE,
+        ];
       }
 
       $file = $fileStorage->create([
@@ -548,15 +571,88 @@ final class TtsCacheManager {
         'status' => 1,
       ]);
       $file->save();
-      return (int) $file->id();
+      return [
+        'fid' => (int) $file->id(),
+        'created' => TRUE,
+      ];
     }
     catch (\Throwable $e) {
-      $this->logger->warning('HearMe: failed to create File entity for @uri: @message', [
+      $this->logger->warning('HearMe: failed to create File entity for @uri (@type).', [
         '@uri' => $uri,
-        '@message' => $e->getMessage(),
+        '@type' => $e::class,
       ]);
-      return NULL;
+      return [
+        'fid' => NULL,
+        'created' => FALSE,
+      ];
     }
+  }
+
+  /**
+   * Deletes bytes that never acquired a managed File entity.
+   */
+  private function deleteUnmanagedAudioFile(string $uri): void {
+    try {
+      $this->fileSystem->delete($uri);
+    }
+    catch (\Throwable $e) {
+      $this->logger->warning('HearMe: could not remove untracked persistent audio @uri (@type).', [
+        '@uri' => $uri,
+        '@type' => $e::class,
+      ]);
+    }
+  }
+
+  /**
+   * Rolls back a File entity created before provenance persistence failed.
+   */
+  private function deleteCreatedFileEntity(?int $fid, string $uri): void {
+    if ($fid === NULL) {
+      return;
+    }
+
+    try {
+      $file = $this->entityTypeManager->getStorage('file')->load($fid);
+      if ($file instanceof FileInterface && $file->getFileUri() === $uri) {
+        if ($this->fileUsage->listUsage($file)) {
+          $this->logger->warning('HearMe: retained File @fid after provenance failure because it acquired usage.', [
+            '@fid' => $fid,
+          ]);
+          return;
+        }
+        $file->delete();
+      }
+    }
+    catch (\Throwable $e) {
+      $this->logger->warning('HearMe: could not roll back File @fid after provenance failure (@type).', [
+        '@fid' => $fid,
+        '@type' => $e::class,
+      ]);
+    }
+  }
+
+  /**
+   * Checks that persistent provenance names the exact managed File and URI.
+   */
+  private function hasValidPersistentFile(object $row): bool {
+    $fid = (int) ($row->fid ?? 0);
+    if ($fid <= 0) {
+      return FALSE;
+    }
+
+    try {
+      $file = $this->entityTypeManager->getStorage('file')->load($fid);
+    }
+    catch (\Throwable $e) {
+      $this->logger->warning('HearMe: could not validate persistent audio File @fid (@type).', [
+        '@fid' => $fid,
+        '@type' => $e::class,
+      ]);
+      return FALSE;
+    }
+
+    return $file instanceof FileInterface
+      && $file->getFileUri() === (string) ($row->uri ?? '');
   }
 
   protected function getConfigInt(string $key, int $default): int {

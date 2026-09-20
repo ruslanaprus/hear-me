@@ -122,7 +122,11 @@ Runtime files are private by default, but can be public if **Runtime cache file 
 
 Queue-generated entity audio uses `public://tts/` because it is intended to be attached as Media/File entities. Review site access requirements before exposing generated media.
 
-HearMe queues only published nodes that anonymous visitors can view and includes only source fields viewable by anonymous visitors. The current pre-release path can detach stale/ineligible provenance-backed audio but checks only current entity references before deletion. D10.5-D10.7 block release until transient failures cannot trigger retraction, retained revisions are protected, and grant-only access changes can be reconciled. Manual or unknown audio is preserved. If a custom access module reports access incorrectly, disable queue generation until its node and field access integration is corrected.
+HearMe queues only published nodes that anonymous visitors can view and includes only source fields viewable by anonymous visitors. Stale or ineligible provenance-backed audio can be detached, but current cleanup checks only current entity references. D10.6-D10.7 still block release until retained revisions are protected and grant-only access changes can be reconciled. Manual or unknown audio is preserved. If a custom access module reports access incorrectly, disable queue generation until its node and field access integration is corrected.
+
+Provider discovery, endpoint configuration, queue, File/Media persistence, or backend synthesis failures do not by themselves detach otherwise valid generated audio. Persistent jobs are retried when the exact File provenance or Media handoff cannot be completed. Check Drupal logs for the failure class and restore the provider or storage dependency; HearMe does not log source text for these failures. Publication/access loss and actual public source or language changes can still retract stale audio according to **Replace existing HearMe-generated audio when content changes**.
+
+HearMe recognizes generated ownership only when the cache metadata has an `entity` row linked to the exact File ID used by Media. It does not repair an incomplete pre-release row by trusting a `public://tts/` URI, Media bundle, or name. Requeue affected content after correcting storage so a new provenance-backed File and Media can be generated safely.
 
 ## Uninstall Is Blocked
 

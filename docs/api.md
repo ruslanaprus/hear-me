@@ -43,7 +43,7 @@ getTrustedRuntimeSource(string $text, string $lang, string $source, ?string $cac
 
 ### Persistent synthesis
 
-`synthesize()` forces generated audio into HearMe's entity-audio storage and returns a `MediaInterface` suitable for server-side attachment workflows. It returns `NULL` when the provider returns no usable synthesis result. It throws `Drupal\hear_me\Exception\PersistentSynthesisUnavailableException` when provider discovery, synthesis locking, or persistent cache storage is temporarily unavailable. Drupal File or Media persistence exceptions are not converted to `NULL` and can propagate to the caller.
+`synthesize()` forces generated audio into HearMe's entity-audio storage and returns a `MediaInterface` suitable for server-side attachment workflows. Success guarantees that the persistent `entity` provenance row is durably linked to the exact File ID referenced by the returned Media. It returns `NULL` when the provider returns no usable synthesis result. It throws `Drupal\hear_me\Exception\PersistentSynthesisUnavailableException` when provider discovery, synthesis locking, persistent File/provenance storage, or Media persistence is temporarily unavailable. These failures are never converted to a successful Media result through URI inference.
 
 ### Inline cache-source tokens
 

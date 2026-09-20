@@ -58,7 +58,6 @@ final class NodeAudioAttacher {
     MediaInterface $media,
     ?string $expectedContentHash = NULL,
     ?string $queueToken = NULL,
-    ?string $attemptToken = NULL,
   ): bool {
     $mediaId = (int) $media->id();
     if ($mediaId <= 0) {
@@ -79,26 +78,51 @@ final class NodeAudioAttacher {
         throw new EntityStorageException(sprintf('Generated audio media %d no longer exists.', $mediaId));
       }
 
-      $transaction = $this->database->startTransaction();
-      try {
-        $this->database->select('node', 'n')
-          ->fields('n', ['nid'])
-          ->condition('nid', $nid)
-          ->forUpdate()
-          ->execute()
-          ->fetchField();
-        return $this->attachLocked($nid, $storedMedia, $expectedContentHash, $queueToken, $attemptToken);
+      if ($expectedContentHash !== NULL && $queueToken !== NULL) {
+        $result = $this->nodeAudioQueue->processCurrentQueueItem(
+          $nid,
+          $expectedContentHash,
+          $queueToken,
+          fn(): bool => $this->attachInTransaction($nid, $storedMedia, $expectedContentHash, $queueToken),
+        );
+        if ($result === NULL) {
+          throw new LockAcquiringException('HearMe queue ownership is busy.');
+        }
+        return $result;
       }
-      catch (\Throwable $e) {
-        $transaction->rollBack();
-        throw $e;
-      }
-      finally {
-        unset($transaction);
-      }
+
+      return $this->attachInTransaction($nid, $storedMedia, $expectedContentHash, $queueToken);
     }
     finally {
       $this->lock->release($lockName);
+    }
+  }
+
+  /**
+   * Attaches stored Media in a node-row transaction.
+   */
+  private function attachInTransaction(
+    int $nid,
+    MediaInterface $media,
+    ?string $expectedContentHash,
+    ?string $queueToken,
+  ): bool {
+    $transaction = $this->database->startTransaction();
+    try {
+      $this->database->select('node', 'n')
+        ->fields('n', ['nid'])
+        ->condition('nid', $nid)
+        ->forUpdate()
+        ->execute()
+        ->fetchField();
+      return $this->attachLocked($nid, $media, $expectedContentHash, $queueToken);
+    }
+    catch (\Throwable $e) {
+      $transaction->rollBack();
+      throw $e;
+    }
+    finally {
+      unset($transaction);
     }
   }
 
@@ -110,7 +134,6 @@ final class NodeAudioAttacher {
     MediaInterface $media,
     ?string $expectedContentHash,
     ?string $queueToken,
-    ?string $attemptToken,
   ): bool {
     $config = $this->configFactory->get('hear_me.settings');
     $fieldName = $config->get('tts_audio_field') ?? 'field_tts_audio';
@@ -128,17 +151,12 @@ final class NodeAudioAttacher {
       return FALSE;
     }
 
-    if ($expectedContentHash !== NULL && $queueToken !== NULL && $attemptToken !== NULL) {
-      $reservationCurrent = $this->nodeAudioQueue->refreshSynthesisAttempt(
+    if ($expectedContentHash !== NULL && $queueToken !== NULL) {
+      if (!$this->nodeAudioQueue->isCurrentQueueItem(
         $nid,
         $expectedContentHash,
         $queueToken,
-        $attemptToken,
-      );
-      if ($reservationCurrent === NULL) {
-        throw new LockAcquiringException('HearMe synthesis attempt state is busy.');
-      }
-      if (!$reservationCurrent) {
+      )) {
         return FALSE;
       }
     }
@@ -205,18 +223,13 @@ final class NodeAudioAttacher {
       $node->setNewRevision(FALSE);
     }
     $node->save();
-    if ($expectedContentHash !== NULL && $queueToken !== NULL && $attemptToken !== NULL) {
-      $reservationCurrent = $this->nodeAudioQueue->refreshSynthesisAttempt(
+    if ($expectedContentHash !== NULL && $queueToken !== NULL) {
+      if (!$this->nodeAudioQueue->isCurrentQueueItem(
         $nid,
         $expectedContentHash,
         $queueToken,
-        $attemptToken,
-      );
-      if ($reservationCurrent === NULL) {
-        throw new LockAcquiringException('HearMe synthesis attempt state is busy after node attachment.');
-      }
-      if (!$reservationCurrent) {
-        throw new EntityStorageException('HearMe synthesis attempt changed during node attachment.');
+      )) {
+        throw new EntityStorageException('HearMe queue ownership changed during node attachment.');
       }
     }
     return TRUE;
@@ -298,7 +311,11 @@ final class NodeAudioAttacher {
       $node = $nodeStorage->load($nid);
       if ($node instanceof NodeInterface) {
         $this->entityTypeManager->getAccessControlHandler('node')->resetCache();
-        $this->nodeAudioQueue->queueNode($node);
+        if ($this->nodeAudioQueue->queueNode($node) === HearMeNodeAudioQueue::RESULT_FAILED) {
+          $this->logger->warning('HearMe: automatic audio queue publication failed for node @nid. Cron will retry any retained pending marker.', [
+            '@nid' => $nid,
+          ]);
+        }
       }
     };
 
@@ -333,7 +350,11 @@ final class NodeAudioAttacher {
       if (!$generatedMediaIds) {
         $overwriteManual = $this->configFactory->get('hear_me.settings')->get('overwrite_manual_audio') ?? FALSE;
         if ($queueIfMissing && $queueItem !== NULL && (!$this->getFieldTargetIdsForNode($node) || $overwriteManual)) {
-          $this->nodeAudioQueue->queueItem($queueItem);
+          if ($this->nodeAudioQueue->queueItem($queueItem) === HearMeNodeAudioQueue::RESULT_FAILED) {
+            $this->logger->warning('HearMe: updated audio queue publication failed for node @nid. Cron will retry any retained pending marker.', [
+              '@nid' => $nid,
+            ]);
+          }
         }
         return;
       }

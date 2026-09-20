@@ -110,7 +110,7 @@ By default, `/hear-me/tts` runtime playback caching uses private files. Configur
 
 The backfill action only scans content types selected under **Queue TTS pre-generation for content types**. It skips nodes when the configured TTS audio field is missing or incompatible, the field already has audio and missing-only mode is used, the configured title/source fields produce no source text, or the resolved language is not supported by the active provider.
 
-If a backfill reports fewer queued jobs than scanned nodes, check the skipped counts. Re-running backfill before cron processes existing jobs skips nodes whose current content hash already has an identical pending queue job.
+If a backfill reports fewer queued jobs than scanned nodes, check the skipped counts and publication warning. Re-running backfill before cron processes an already published identical job reports a duplicate. A queue-backend failure is reported separately; HearMe retains its pending ownership marker and cron retries publication with the same token.
 
 Use **Create HearMe audio field** first, review **Queue source fields**, then run **Queue existing content** again. The pre-release candidate offers stored plain text, long text, formatted text, and text-with-summary fields; D10.4 blocks release until formatted values pass through Drupal text filters. If you use an existing audio field, confirm that it is an entity reference to media and allows the `hear_me_audio` bundle. The optional `drush hear-me:queue-existing --requeue-existing` command targets Drush 13.7 or later, but minimum-version discovery and execution remain a pre-release verification blocker.
 
@@ -141,6 +141,6 @@ Disable the filter or remove dependent config through the UI, then retry uninsta
 
 Use **Clear generated runtime audio cache** on the HearMe settings form to clear tracked runtime playback files.
 
-Uninstall clears tracked runtime playback cache files and pending queue/state records. It does not delete persistent Media or File entities and is blocked until HearMe Audio media has been removed or migrated. The separate normal content lifecycle cleanup applies only to provenance-backed generated audio that no entity references any longer.
+Uninstall clears tracked runtime playback cache files, pending queue jobs, and module-owned key-value markers. It does not delete persistent Media or File entities and is blocked until HearMe Audio media has been removed or migrated. The separate normal content lifecycle cleanup applies only to provenance-backed generated audio that no entity references any longer.
 
 Node fields created through **Audio field setup** are site-owned. Before uninstall, migrate or explicitly delete every such field that still targets the HearMe Audio Media bundle. D10.9 must make the uninstall validator name those fields and block uninstall rather than allowing Drupal dependency removal to delete or broaden them implicitly.

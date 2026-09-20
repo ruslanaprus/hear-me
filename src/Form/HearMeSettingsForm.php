@@ -929,6 +929,15 @@ class HearMeSettingsForm extends ConfigFormBase {
       '@queued' => (int) ($results['queued'] ?? 0),
     ]));
 
+    $failedPublications = (int) ($results['failed_queue_publication'] ?? 0);
+    if ($failedPublications > 0) {
+      \Drupal::messenger()->addWarning(\Drupal::translation()->formatPlural(
+        $failedPublications,
+        '1 audio job could not be published immediately. Cron retries retained backend-failure markers; rerun the backfill if this warning persists.',
+        '@count audio jobs could not be published immediately. Cron retries retained backend-failure markers; rerun the backfill if this warning persists.',
+      ));
+    }
+
     $skipped = (int) ($results['skipped_existing_audio'] ?? 0)
       + (int) ($results['skipped_duplicate_queue'] ?? 0)
       + (int) ($results['skipped_field_missing'] ?? 0)

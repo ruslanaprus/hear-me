@@ -83,6 +83,7 @@ final class HearMeQueueExistingCommand extends Command {
     $io->table(['Metric', 'Count'], [
       ['Scanned', $stats['scanned']],
       ['Queued', $stats['queued']],
+      ['Failed publication attempts', $stats['failed_queue_publication']],
       ['Skipped: already queued', $stats['skipped_duplicate_queue']],
       ['Skipped: already had audio', $stats['skipped_existing_audio']],
       ['Skipped: missing audio field', $stats['skipped_field_missing']],

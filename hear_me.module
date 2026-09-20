@@ -69,5 +69,6 @@ function hear_me_entity_delete(EntityInterface $entity): void {
  */
 function hear_me_cron() {
   \Drupal::service('hear_me.cache_manager')->cleanup();
+  \Drupal::service('hear_me.node_audio_queue')->repairPendingPublications();
   \Drupal::service('hear_me.node_audio_attacher')->publishPendingGeneratedAudioCleanup();
 }

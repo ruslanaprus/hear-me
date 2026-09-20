@@ -134,14 +134,16 @@ Defaults are conservative:
 - Only configured source fields viewable by anonymous visitors are included.
 - Only nodes with an empty configured TTS audio field are queued unless **Requeue content that already has audio** is checked.
 - Existing installs use title plus Body text until **Queue source fields** is saved.
-- Re-running backfill while an identical node/content hash is already pending skips the duplicate job.
+- Re-running backfill while an identical node/content hash is already published skips the duplicate job. A queue-backend publication failure is reported separately and its retained marker is retried by cron.
 - Provenance-backed generated audio is detached before changed source text is queued, so there may be no attached audio until replacement succeeds.
 - Existing manual or unknown audio is not overwritten unless **Overwrite manually selected audio** is enabled.
 - The current pre-release path detaches provenance-backed generated audio when a node becomes unpublished or otherwise fails queue eligibility, then checks only current entity references before deletion. D10.5-D10.7 block release until retraction distinguishes transient failures, cleanup preserves retained revisions, and grant-only access changes can be reconciled.
 
 HearMe treats existing `hear_me_audio` media as generated only when its File entity has matching persistent-generation provenance in the HearMe cache metadata table. Directory names alone never establish ownership, so editor uploads under `public://tts/` remain manual or unknown and are protected by default.
 
-The confirmed admin action uses Drupal Batch API and only creates queue jobs. Cron or queue workers perform the actual TTS synthesis later. Each synthesis queue item contains only a node ID, content hash, and opaque generation token. The worker reloads current text and skips stale jobs before synthesis, then validates a fresh node and hash while attaching the Media. Confirmed provider failures are delayed and retried up to three times before the job is discarded; temporary provider-discovery, persistent-storage, queue-state, or Media handoff failures are delayed without consuming that budget. D10.3 blocks release until the current attempt-reservation implementation is replaced by simpler ownership that cannot acknowledge newer work. Provider logs retain synthesis failure details.
+The confirmed admin action uses Drupal Batch API and only creates queue jobs. Cron or queue workers perform the actual TTS synthesis later. Each synthesis queue item contains only a node ID, content hash, and opaque generation token. The worker reloads current text and skips stale jobs before synthesis, then validates the current token, node access, source, and hash while attaching the Media in a node transaction. Confirmed provider failures are delayed and retried up to three times before the job is discarded; temporary provider-discovery, persistent-storage, queue-state, or Media handoff failures are delayed without consuming that budget. Queue ownership and failure counts use a dedicated module key-value collection without attempt leases. Provider logs retain synthesis failure details without source text.
+
+Queue publication returns explicit queued, duplicate, or failed outcomes. When a backend returns failure or throws after HearMe stores the marker, the marker remains pending and cron retries the same compact payload and token. Backfill reports this separately from a true duplicate.
 
 Queue-generated audio is saved under `public://tts/` as Drupal Media/File entities. HearMe excludes unpublished nodes, nodes anonymous visitors cannot view, and source fields anonymous visitors cannot view.
 
@@ -237,7 +239,7 @@ After the content and Drupal-reported plugin/config dependencies are removed, un
 
 - The `hear_me_audio_cache` schema table through Drupal's uninstall process.
 - Tracked runtime playback cache files.
-- Pending `hear_me_tts` synthesis jobs, generated-audio cleanup jobs, and queued-hash state markers.
+- Pending `hear_me_tts` synthesis jobs, generated-audio cleanup jobs, and module-owned queue ownership markers.
 - Module-owned HearMe Audio media type and audio file field config.
 - Module-owned simple config.
 

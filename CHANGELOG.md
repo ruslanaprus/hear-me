@@ -30,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Simplified queue ownership to one durable generation token and a module-owned key-value collection, removed attempt leases, separated queued/duplicate/failed publication outcomes, and added cron repair for retained backend-publication failures.
 - Reviewed and froze the intended first-release queue, generated-Media, Piper security, uninstall, and optional Drush contracts; unresolved release blockers are documented for separate verification gates.
 
 - Lifecycle hooks live in `hear_me.install` for Drupal install/uninstall discovery.
@@ -44,7 +45,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Organized settings-form construction into private section builders without changing the administrator workflow or submitted form structure.
 - Narrowed the pre-release synthesis coordinator to runtime synthesis, persistent synthesis, and inline cache-source token operations; removed unused URI and raw-byte facades and documented the supported PHP API.
 - Removed the unused provider default-MIME method before publication; synthesis results remain the authoritative MIME source.
-- Queue-generated audio is limited to published nodes and source fields available to anonymous visitors; queue payloads retain only node identity, content hash, and an opaque generation token, and lifecycle publication waits for the node transaction to commit. The D10.1 review retained bounded synthesis retries and fresh-content validation but requires simpler ownership and publication recovery before release.
+- Queue-generated audio is limited to published nodes and source fields available to anonymous visitors; queue payloads retain only node identity, content hash, and an opaque generation token, and lifecycle publication waits for the node transaction to commit. Workers revalidate ownership, current source, and access before attachment, while confirmed provider failures retain a three-failure budget.
 - Generated-audio lifecycle updates honor both generated-replacement and manual-overwrite settings while always retracting generated public audio from ineligible content.
 - Expired or evicted runtime cache entries stop serving immediately, while Files adopted by other Drupal components are preserved and never overwritten during regeneration.
 - Generated-media replacement uses cache provenance instead of public directory names, preserving editor uploads under `public://tts/`.

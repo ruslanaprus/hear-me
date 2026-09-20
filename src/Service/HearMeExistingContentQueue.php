@@ -19,6 +19,7 @@ class HearMeExistingContentQueue {
   protected const STAT_KEYS = [
     'scanned',
     'queued',
+    'failed_queue_publication',
     'skipped_duplicate_queue',
     'skipped_existing_audio',
     'skipped_field_missing',
@@ -329,12 +330,12 @@ class HearMeExistingContentQueue {
       return $stats;
     }
 
-    if ($this->nodeAudioQueue->queueItem($queueItem)) {
-      $stats['queued']++;
-    }
-    else {
-      $stats['skipped_duplicate_queue']++;
-    }
+    $result = $this->nodeAudioQueue->queueItem($queueItem);
+    match ($result) {
+      HearMeNodeAudioQueue::RESULT_QUEUED => $stats['queued']++,
+      HearMeNodeAudioQueue::RESULT_DUPLICATE => $stats['skipped_duplicate_queue']++,
+      default => $stats['failed_queue_publication']++,
+    };
 
     return $stats;
   }

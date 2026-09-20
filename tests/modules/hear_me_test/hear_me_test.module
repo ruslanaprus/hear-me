@@ -1,9 +1,25 @@
 <?php
 
+use Drupal\Core\Access\AccessResult;
+use Drupal\Core\Access\AccessResultInterface;
+use Drupal\Core\Field\FieldDefinitionInterface;
+use Drupal\Core\Field\FieldItemListInterface;
 use Drupal\Core\Session\AccountInterface;
 use Drupal\file\FileInterface;
 use Drupal\media\MediaInterface;
 use Drupal\node\NodeInterface;
+
+/**
+ * Implements hook_entity_field_access().
+ */
+function hear_me_test_entity_field_access(string $operation, FieldDefinitionInterface $field_definition, AccountInterface $account, ?FieldItemListInterface $items = NULL): AccessResultInterface {
+  $deniedField = (string) \Drupal::state()->get('hear_me_test.denied_anonymous_field', '');
+  if ($operation === 'view' && $account->isAnonymous() && $field_definition->getName() === $deniedField) {
+    return AccessResult::forbidden();
+  }
+
+  return AccessResult::neutral();
+}
 
 /**
  * Implements hook_file_presave().

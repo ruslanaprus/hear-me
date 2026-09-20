@@ -11,6 +11,7 @@ use Drupal\hear_me\Plugin\TtsProvider\PiperProvider;
 use Drupal\hear_me\Plugin\TtsProvider\TtsProviderManager;
 use Drupal\hear_me\Plugin\QueueWorker\HearMeGeneratedAudioCleanupWorker;
 use Drupal\hear_me\Plugin\QueueWorker\HearMeQueueWorker;
+use Drupal\hear_me\Service\HearMeNodeAudioQueue;
 use Drupal\media\Entity\MediaType;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
@@ -70,7 +71,8 @@ class HearMeInstallTest extends KernelTestBase {
       'content_hash' => str_repeat('a', 64),
     ]);
     $this->container->get('queue')->get('hear_me_generated_audio_cleanup')->createItem(['media_id' => 1]);
-    $this->container->get('state')->set('hear_me.queued_hash.1.' . str_repeat('a', 64), TRUE);
+    $queueStoreKey = '1.' . str_repeat('a', 64);
+    $this->container->get('keyvalue')->get(HearMeNodeAudioQueue::STORE_COLLECTION)->set($queueStoreKey, TRUE);
     $this->container->get('keyvalue')->get('hear_me.generated_audio_cleanup')->set('1', TRUE);
     $file = $this->container->get('entity_type.manager')->getStorage('file')->create([
       'uri' => 'public://tts/reused-runtime.wav',
@@ -111,7 +113,7 @@ class HearMeInstallTest extends KernelTestBase {
     $this->assertNull($this->container->get('entity_type.manager')->getStorage('field_storage_config')->load('media.field_hear_me_audio_file'));
     $this->assertSame(0, $this->container->get('queue')->get('hear_me_tts')->numberOfItems());
     $this->assertSame(0, $this->container->get('queue')->get('hear_me_generated_audio_cleanup')->numberOfItems());
-    $this->assertNull($this->container->get('state')->get('hear_me.queued_hash.1.' . str_repeat('a', 64)));
+    $this->assertFalse($this->container->get('keyvalue')->get(HearMeNodeAudioQueue::STORE_COLLECTION)->has($queueStoreKey));
     $this->assertFalse($this->container->get('keyvalue')->get('hear_me.generated_audio_cleanup')->has('1'));
     $this->assertNotNull($this->container->get('entity_type.manager')->getStorage('file')->load($file->id()));
   }

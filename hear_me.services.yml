@@ -51,7 +51,6 @@ services:
       - '@hear_me.input_validator'
       - '@entity_type.manager'
       - '@queue'
-      - '@state'
       - '@keyvalue'
       - '@lock'
       - '@datetime.time'

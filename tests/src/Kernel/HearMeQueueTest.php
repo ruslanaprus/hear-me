@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Drupal\Tests\hear_me\Kernel;
 
-use Drupal\Core\Entity\EntityStorageException;
 use Drupal\field\Entity\FieldConfig;
 use Drupal\field\Entity\FieldStorageConfig;
 use Drupal\file\Entity\File;
@@ -153,12 +152,8 @@ class HearMeQueueTest extends EntityKernelTestBase {
       ]);
     $node_audio_queue->expects($this->never())->method('clearQueuedHash');
     $node_audio_queue->expects($this->once())
-      ->method('reserveSynthesisAttempt')
-      ->with(1, $content_hash, $token)
-      ->willReturn('captured-attempt');
-    $node_audio_queue->expects($this->once())
       ->method('recordSynthesisFailure')
-      ->with(1, $content_hash, $token, 'captured-attempt')
+      ->with(1, $content_hash, $token)
       ->willReturn(1);
 
     $provider_resolver = $this->container->get('hear_me.provider_resolver');
@@ -199,17 +194,8 @@ class HearMeQueueTest extends EntityKernelTestBase {
       ->method('buildCurrentQueueItem')
       ->willReturn($current);
     $nodeAudioQueue->expects($this->exactly(3))
-      ->method('reserveSynthesisAttempt')
-      ->with(1, $contentHash, $token)
-      ->willReturnOnConsecutiveCalls('attempt-1', 'attempt-2', 'attempt-3');
-    $nodeAudioQueue->expects($this->exactly(3))
       ->method('recordSynthesisFailure')
-      ->with(
-        1,
-        $contentHash,
-        $token,
-        $this->callback(static fn(string $attemptToken): bool => str_starts_with($attemptToken, 'attempt-')),
-      )
+      ->with(1, $contentHash, $token)
       ->willReturnOnConsecutiveCalls(1, 2, 3);
     $nodeAudioQueue->expects($this->never())->method('clearQueuedHash');
     $worker = new HearMeQueueWorker(
@@ -239,14 +225,14 @@ class HearMeQueueTest extends EntityKernelTestBase {
   }
 
   /**
-   * Tests attempt-state lock contention delays synthesis instead of losing it.
+   * Tests failure-state lock contention delays instead of losing the item.
    */
-  public function testAttemptLockContentionRequeuesBeforeSynthesis(): void {
+  public function testFailureMarkerLockContentionRequeuesAfterSynthesis(): void {
     $this->config('hear_me.settings')->set('provider', 'test')->save();
     $contentHash = str_repeat('9', 64);
     $token = 'contended-attempt-token';
     $ttsService = $this->createMock(HearMeService::class);
-    $ttsService->expects($this->never())->method('synthesize');
+    $ttsService->expects($this->once())->method('synthesize')->willReturn(NULL);
     $nodeAudioQueue = $this->createMock(HearMeNodeAudioQueue::class);
     $nodeAudioQueue->expects($this->once())
       ->method('isCurrentQueueItem')
@@ -261,7 +247,7 @@ class HearMeQueueTest extends EntityKernelTestBase {
         'content_hash' => $contentHash,
       ]);
     $nodeAudioQueue->expects($this->once())
-      ->method('reserveSynthesisAttempt')
+      ->method('recordSynthesisFailure')
       ->with(1, $contentHash, $token)
       ->willReturn(NULL);
     $nodeAudioQueue->expects($this->never())->method('clearQueuedHash');
@@ -286,7 +272,7 @@ class HearMeQueueTest extends EntityKernelTestBase {
   /**
    * Tests local persistence failures do not consume the synthesis budget.
    */
-  public function testPersistentSynthesisFailureReleasesAttemptAndRequeues(): void {
+  public function testPersistentSynthesisFailureDoesNotConsumeFailureBudget(): void {
     $this->config('hear_me.settings')->set('provider', 'test')->save();
     $contentHash = str_repeat('7', 64);
     $token = 'completion-contention-token';
@@ -305,13 +291,6 @@ class HearMeQueueTest extends EntityKernelTestBase {
         'lang' => 'en',
         'content_hash' => $contentHash,
       ]);
-    $nodeAudioQueue->expects($this->once())
-      ->method('reserveSynthesisAttempt')
-      ->willReturn('completion-attempt');
-    $nodeAudioQueue->expects($this->once())
-      ->method('completeSynthesisAttempt')
-      ->with(1, $contentHash, $token, 'completion-attempt')
-      ->willReturn(TRUE);
     $nodeAudioQueue->expects($this->never())->method('recordSynthesisFailure');
     $nodeAudioQueue->expects($this->never())->method('clearQueuedHash');
     $worker = new HearMeQueueWorker(
@@ -403,12 +382,7 @@ class HearMeQueueTest extends EntityKernelTestBase {
       ], NULL);
     $nodeAudioQueue->expects($this->once())
       ->method('clearQueuedHash')
-      ->with(1, $contentHash, $token, 'stale-attempt');
-    $nodeAudioQueue->expects($this->once())
-      ->method('reserveSynthesisAttempt')
-      ->with(1, $contentHash, $token)
-      ->willReturn('stale-attempt');
-    $nodeAudioQueue->expects($this->never())->method('completeSynthesisAttempt');
+      ->with(1, $contentHash, $token);
 
     $worker = new HearMeQueueWorker(
       [],
@@ -605,9 +579,9 @@ class HearMeQueueTest extends EntityKernelTestBase {
   }
 
   /**
-   * Tests a superseded attempt rolls back an attachment made during its lease.
+   * Tests superseded queue ownership rolls back an attachment.
    */
-  public function testSupersededAttemptRollsBackNodeAttachment(): void {
+  public function testSupersededOwnerCannotAttachOrClearNewerMarker(): void {
     $this->createContentType('article', 'Article');
     $this->createAudioReferenceField('article');
     $this->config('hear_me.settings')
@@ -616,43 +590,31 @@ class HearMeQueueTest extends EntityKernelTestBase {
       ->save();
     $node = Node::create([
       'type' => 'article',
-      'title' => 'Attempt lease race',
+      'title' => 'Queue owner race',
       'status' => 1,
     ]);
     $node->save();
-    $media = $this->createAudioMedia('public://tts/attempt-lease-race.wav', 'Attempt lease race');
-    $contentHash = str_repeat('d', 64);
-    $nodeAudioQueue = $this->createMock(HearMeNodeAudioQueue::class);
-    $nodeAudioQueue->expects($this->exactly(2))
-      ->method('refreshSynthesisAttempt')
-      ->with((int) $node->id(), $contentHash, 'queue-token', 'attempt-token')
-      ->willReturnOnConsecutiveCalls(TRUE, FALSE);
-    $nodeAudioQueue->expects($this->once())
-      ->method('buildQueueItem')
-      ->willReturn(['content_hash' => $contentHash]);
-    $attacher = new NodeAudioAttacher(
-      $this->container->get('config.factory'),
-      $this->container->get('entity_type.manager'),
-      $this->container->get('entity_field.manager'),
-      $this->container->get('database'),
-      $this->container->get('lock'),
-      $this->container->get('queue'),
-      $this->container->get('keyvalue'),
-      $this->container->get('datetime.time'),
-      $nodeAudioQueue,
-      $this->container->get('hear_me.cache_manager'),
-      $this->container->get('logger.factory'),
-    );
+    $queuedItem = \Drupal::queue('hear_me_tts')->claimItem();
+    $this->assertIsObject($queuedItem);
+    $contentHash = (string) $queuedItem->data['content_hash'];
+    $queueToken = (string) $queuedItem->data['token'];
+    $newerToken = 'newer-queue-owner';
+    $store = $this->container->get('keyvalue')->get(HearMeNodeAudioQueue::STORE_COLLECTION);
+    $storeKey = $node->id() . '.' . $contentHash;
+    $marker = $store->get($storeKey);
+    $marker['token'] = $newerToken;
+    $store->set($storeKey, $marker);
+    $media = $this->createAudioMedia('public://tts/queue-owner-race.wav', 'Queue owner race');
 
-    try {
-      $attacher->attach((int) $node->id(), $media, $contentHash, 'queue-token', 'attempt-token');
-      $this->fail('A superseded synthesis attempt must not commit its node attachment.');
-    }
-    catch (EntityStorageException) {
-      $this->addToAssertionCount(1);
-    }
+    $this->assertFalse($this->container->get('hear_me.node_audio_attacher')->attach(
+      (int) $node->id(),
+      $media,
+      $contentHash,
+      $queueToken,
+    ));
 
     $this->assertTrue($this->reloadNode($node)->get('field_tts_audio')->isEmpty());
+    $this->assertSame($newerToken, $store->get($storeKey)['token']);
   }
 
   /**
@@ -802,13 +764,14 @@ class HearMeQueueTest extends EntityKernelTestBase {
     $tts_service->expects($this->never())->method('synthesize');
 
     $contentHash = str_repeat('c', 64);
-    $stateKey = 'hear_me.queued_hash.1.' . $contentHash;
+    $store = $this->container->get('keyvalue')->get(HearMeNodeAudioQueue::STORE_COLLECTION);
+    $storeKey = '1.' . $contentHash;
     $node_audio_queue = $this->container->get('hear_me.node_audio_queue');
-    $this->assertTrue($node_audio_queue->queueItem([
+    $this->assertSame(HearMeNodeAudioQueue::RESULT_QUEUED, $node_audio_queue->queueItem([
       'nid' => 1,
       'content_hash' => $contentHash,
     ]));
-    $marker = $this->container->get('state')->get($stateKey);
+    $marker = $store->get($storeKey);
 
     $provider_resolver = $this->container->get('hear_me.provider_resolver');
     $this->assertInstanceOf(TtsProviderResolver::class, $provider_resolver);
@@ -820,28 +783,40 @@ class HearMeQueueTest extends EntityKernelTestBase {
       'content_hash' => $contentHash,
     ]);
 
-    $this->assertSame($marker, $this->container->get('state')->get($stateKey));
+    $this->assertSame($marker, $store->get($storeKey));
   }
 
   /**
-   * Tests marker ownership precedes publication and failed publication rolls back.
+   * Tests failed publication retains ownership for cron repair.
    */
-  public function testQueueReservationPrecedesPublication(): void {
-    $state = $this->container->get('state');
+  public function testQueuePublicationFailureIsRepaired(): void {
+    $store = $this->container->get('keyvalue')->get(HearMeNodeAudioQueue::STORE_COLLECTION);
     $publishedItems = [];
     $queue = $this->createMock(QueueInterface::class);
-    $queue->expects($this->exactly(2))
+    $queue->expects($this->exactly(4))
       ->method('createItem')
-      ->willReturnCallback(function (array $item) use ($state, &$publishedItems): int|false {
-        $stateKey = 'hear_me.queued_hash.' . $item['nid'] . '.' . $item['content_hash'];
-        $marker = $state->get($stateKey);
+      ->willReturnCallback(function (array $item) use ($store, &$publishedItems): int|false {
+        $storeKey = $item['nid'] . '.' . $item['content_hash'];
+        $marker = $store->get($storeKey);
         $this->assertSame($item['token'], $marker['token'] ?? NULL);
+        $this->assertSame(0, $marker['published_at'] ?? NULL);
         $this->assertSame(['nid', 'content_hash', 'token'], array_keys($item));
         $publishedItems[] = $item;
-        return count($publishedItems) === 1 ? 1 : FALSE;
+        if (count($publishedItems) === 1) {
+          return FALSE;
+        }
+        if (count($publishedItems) === 2) {
+          return 1;
+        }
+        if (count($publishedItems) === 3) {
+          throw new \RuntimeException('Simulated queue backend failure.');
+        }
+        $marker['token'] = 'newer-owner-during-publication';
+        $store->set($storeKey, $marker);
+        return 2;
       });
     $queueFactory = $this->createMock(QueueFactory::class);
-    $queueFactory->expects($this->exactly(2))
+    $queueFactory->expects($this->exactly(4))
       ->method('get')
       ->with('hear_me_tts')
       ->willReturn($queue);
@@ -851,19 +826,80 @@ class HearMeQueueTest extends EntityKernelTestBase {
       $this->container->get('hear_me.input_validator'),
       $this->container->get('entity_type.manager'),
       $queueFactory,
-      $state,
       $this->container->get('keyvalue'),
       $this->container->get('lock'),
       $this->container->get('datetime.time'),
       $this->container->get('logger.factory'),
     );
-    $firstHash = str_repeat('1', 64);
-    $secondHash = str_repeat('2', 64);
+    $contentHash = str_repeat('1', 64);
+    $storeKey = '1.' . $contentHash;
 
-    $this->assertTrue($nodeAudioQueue->queueItem(['nid' => 1, 'content_hash' => $firstHash]));
-    $this->assertFalse($nodeAudioQueue->queueItem(['nid' => 2, 'content_hash' => $secondHash]));
-    $this->assertTrue($nodeAudioQueue->isCurrentQueueItem(1, $firstHash, $publishedItems[0]['token']));
-    $this->assertFalse($state->get('hear_me.queued_hash.2.' . $secondHash, FALSE));
+    $this->assertSame(HearMeNodeAudioQueue::RESULT_FAILED, $nodeAudioQueue->queueItem([
+      'nid' => 1,
+      'content_hash' => $contentHash,
+    ]));
+    $pending = $store->get($storeKey);
+    $this->assertIsArray($pending);
+    $this->assertSame(0, $pending['published_at']);
+    $this->assertSame(1, $nodeAudioQueue->repairPendingPublications());
+    $this->assertSame($publishedItems[0], $publishedItems[1]);
+    $this->assertGreaterThan(0, $store->get($storeKey)['published_at']);
+    $this->assertSame(HearMeNodeAudioQueue::RESULT_DUPLICATE, $nodeAudioQueue->queueItem([
+      'nid' => 1,
+      'content_hash' => $contentHash,
+    ]));
+    $this->assertTrue($nodeAudioQueue->isCurrentQueueItem(1, $contentHash, $publishedItems[0]['token']));
+
+    $exceptionHash = str_repeat('2', 64);
+    $this->assertSame(HearMeNodeAudioQueue::RESULT_FAILED, $nodeAudioQueue->queueItem([
+      'nid' => 2,
+      'content_hash' => $exceptionHash,
+    ]));
+    $this->assertSame(0, $store->get('2.' . $exceptionHash)['published_at']);
+
+    $supersededHash = str_repeat('5', 64);
+    $this->assertSame(HearMeNodeAudioQueue::RESULT_FAILED, $nodeAudioQueue->queueItem([
+      'nid' => 5,
+      'content_hash' => $supersededHash,
+    ]));
+    $this->assertSame('newer-owner-during-publication', $store->get('5.' . $supersededHash)['token']);
+  }
+
+  /**
+   * Tests marker lock contention reports a failed publication outcome.
+   */
+  public function testQueueMarkerLockContentionReportsFailure(): void {
+    $contentHash = str_repeat('3', 64);
+    $storeKey = '3.' . $contentHash;
+    $queueFactory = $this->createMock(QueueFactory::class);
+    $queueFactory->expects($this->never())->method('get');
+    $lock = $this->createMock(LockBackendInterface::class);
+    $lock->expects($this->exactly(2))
+      ->method('acquire')
+      ->with('hear_me.queue_hash.' . hash('sha256', $storeKey), 30.0)
+      ->willReturn(FALSE);
+    $lock->expects($this->once())
+      ->method('wait')
+      ->with('hear_me.queue_hash.' . hash('sha256', $storeKey), 1);
+    $nodeAudioQueue = new HearMeNodeAudioQueue(
+      $this->container->get('config.factory'),
+      $this->container->get('hear_me.provider_resolver'),
+      $this->container->get('hear_me.input_validator'),
+      $this->container->get('entity_type.manager'),
+      $queueFactory,
+      $this->container->get('keyvalue'),
+      $lock,
+      $this->container->get('datetime.time'),
+      $this->container->get('logger.factory'),
+    );
+
+    $this->assertSame(HearMeNodeAudioQueue::RESULT_FAILED, $nodeAudioQueue->queueItem([
+      'nid' => 3,
+      'content_hash' => $contentHash,
+    ]));
+    $this->assertFalse($this->container->get('keyvalue')
+      ->get(HearMeNodeAudioQueue::STORE_COLLECTION)
+      ->has($storeKey));
   }
 
   /**
@@ -879,7 +915,7 @@ class HearMeQueueTest extends EntityKernelTestBase {
       ->save();
     $database = $this->container->get('database');
     $queue = \Drupal::queue('hear_me_tts');
-    $state = $this->container->get('state');
+    $store = $this->container->get('keyvalue')->get(HearMeNodeAudioQueue::STORE_COLLECTION);
 
     $transaction = $database->startTransaction();
     $committedNode = Node::create([
@@ -890,13 +926,13 @@ class HearMeQueueTest extends EntityKernelTestBase {
     $committedNode->save();
     $committedItem = $this->container->get('hear_me.node_audio_queue')->buildQueueItem($committedNode);
     $this->assertIsArray($committedItem);
-    $committedStateKey = 'hear_me.queued_hash.' . $committedNode->id() . '.' . $committedItem['content_hash'];
+    $committedStoreKey = $committedNode->id() . '.' . $committedItem['content_hash'];
     $this->assertSame(0, $queue->numberOfItems());
-    $this->assertFalse($state->get($committedStateKey, FALSE));
+    $this->assertFalse($store->get($committedStoreKey, FALSE));
 
     unset($transaction);
     $this->assertSame(1, $queue->numberOfItems());
-    $this->assertIsArray($state->get($committedStateKey));
+    $this->assertIsArray($store->get($committedStoreKey));
 
     $transaction = $database->startTransaction();
     $rolledBackNode = Node::create([
@@ -907,12 +943,71 @@ class HearMeQueueTest extends EntityKernelTestBase {
     $rolledBackNode->save();
     $rolledBackItem = $this->container->get('hear_me.node_audio_queue')->buildQueueItem($rolledBackNode);
     $this->assertIsArray($rolledBackItem);
-    $rolledBackStateKey = 'hear_me.queued_hash.' . $rolledBackNode->id() . '.' . $rolledBackItem['content_hash'];
+    $rolledBackStoreKey = $rolledBackNode->id() . '.' . $rolledBackItem['content_hash'];
     $transaction->rollBack();
     unset($transaction);
 
     $this->assertSame(1, $queue->numberOfItems());
-    $this->assertFalse($state->get($rolledBackStateKey, FALSE));
+    $this->assertFalse($store->get($rolledBackStoreKey, FALSE));
+  }
+
+  /**
+   * Tests post-commit backend failure leaves a cron-repairable marker.
+   */
+  public function testAutomaticQueuePublicationFailureIsRepairable(): void {
+    $this->createContentType('article', 'Article');
+    $this->createAudioReferenceField('article');
+    $this->config('hear_me.settings')
+      ->set('provider', 'test')
+      ->set('queue_bundles', ['article'])
+      ->set('tts_audio_field', 'field_tts_audio')
+      ->save();
+    $publishedItems = [];
+    $queue = $this->createMock(QueueInterface::class);
+    $queue->expects($this->exactly(2))
+      ->method('createItem')
+      ->willReturnCallback(static function (array $item) use (&$publishedItems): int|false {
+        $publishedItems[] = $item;
+        return count($publishedItems) === 1 ? FALSE : 1;
+      });
+    $queueFactory = $this->createMock(QueueFactory::class);
+    $queueFactory->expects($this->exactly(2))
+      ->method('get')
+      ->with('hear_me_tts')
+      ->willReturn($queue);
+    $nodeAudioQueue = new HearMeNodeAudioQueue(
+      $this->container->get('config.factory'),
+      $this->container->get('hear_me.provider_resolver'),
+      $this->container->get('hear_me.input_validator'),
+      $this->container->get('entity_type.manager'),
+      $queueFactory,
+      $this->container->get('keyvalue'),
+      $this->container->get('lock'),
+      $this->container->get('datetime.time'),
+      $this->container->get('logger.factory'),
+    );
+    $this->container->set('hear_me.node_audio_queue', $nodeAudioQueue);
+
+    $node = Node::create([
+      'type' => 'article',
+      'title' => 'Committed before backend failure',
+      'status' => 1,
+    ]);
+    $node->save();
+
+    $this->assertNotNull(Node::load($node->id()));
+    $this->assertCount(1, $publishedItems);
+    $storeKey = $node->id() . '.' . $publishedItems[0]['content_hash'];
+    $marker = $this->container->get('keyvalue')
+      ->get(HearMeNodeAudioQueue::STORE_COLLECTION)
+      ->get($storeKey);
+    $this->assertIsArray($marker);
+    $this->assertSame(0, $marker['published_at']);
+    \hear_me_cron();
+    $this->assertSame($publishedItems[0], $publishedItems[1]);
+    $this->assertGreaterThan(0, $this->container->get('keyvalue')
+      ->get(HearMeNodeAudioQueue::STORE_COLLECTION)
+      ->get($storeKey)['published_at']);
   }
 
   /**
@@ -1407,6 +1502,62 @@ class HearMeQueueTest extends EntityKernelTestBase {
   }
 
   /**
+   * Tests backfill distinguishes duplicate and failed publication outcomes.
+   */
+  public function testExistingContentBackfillReportsPublicationFailureSeparately(): void {
+    $this->createContentType('article', 'Article');
+    $this->createAudioReferenceField('article');
+    $node = Node::create([
+      'type' => 'article',
+      'title' => 'Explicit publication outcomes',
+      'status' => 1,
+    ]);
+    $node->save();
+
+    $nodeAudioQueue = $this->createMock(HearMeNodeAudioQueue::class);
+    $nodeAudioQueue->expects($this->exactly(2))
+      ->method('resolveSupportedNodeLanguage')
+      ->with($node, 'test')
+      ->willReturn('en');
+    $queueItem = [
+      'nid' => (int) $node->id(),
+      'content_hash' => str_repeat('4', 64),
+    ];
+    $nodeAudioQueue->expects($this->exactly(2))
+      ->method('buildQueueItem')
+      ->with($node, 'test')
+      ->willReturn($queueItem);
+    $nodeAudioQueue->expects($this->exactly(2))
+      ->method('queueItem')
+      ->with($queueItem)
+      ->willReturnOnConsecutiveCalls(
+        HearMeNodeAudioQueue::RESULT_FAILED,
+        HearMeNodeAudioQueue::RESULT_DUPLICATE,
+      );
+    $backfill = new class(
+      $this->container->get('config.factory'),
+      $this->container->get('entity_type.manager'),
+      $nodeAudioQueue,
+      $this->container->get('hear_me.provider_resolver'),
+      $this->container->get('hear_me.audio_field_validator'),
+    ) extends HearMeExistingContentQueue {
+
+      public function queueOne(Node $node, string $providerId): array {
+        return parent::queueNode($node, TRUE, $providerId);
+      }
+
+    };
+
+    $failed = $backfill->queueOne($node, 'test');
+    $duplicate = $backfill->queueOne($node, 'test');
+
+    $this->assertSame(1, $failed['failed_queue_publication']);
+    $this->assertSame(0, $failed['skipped_duplicate_queue']);
+    $this->assertSame(0, $duplicate['failed_queue_publication']);
+    $this->assertSame(1, $duplicate['skipped_duplicate_queue']);
+  }
+
+  /**
    * Tests backfill reports unsupported languages separately from empty source.
    */
   public function testExistingContentBackfillReportsUnsupportedLanguage(): void {
@@ -1436,81 +1587,157 @@ class HearMeQueueTest extends EntityKernelTestBase {
   }
 
   /**
-   * Tests stale markers recover and only synthesis failures consume attempts.
+   * Tests marker supersession and the confirmed-failure budget.
    */
-  public function testQueueMarkerLifecycleRecoversFromMissingMessages(): void {
+  public function testQueueMarkerSupersessionAndFailureBudget(): void {
     $contentHash = str_repeat('f', 64);
     $item = ['nid' => 123, 'content_hash' => $contentHash];
-    $stateKey = 'hear_me.queued_hash.123.' . $contentHash;
+    $storeKey = '123.' . $contentHash;
+    $store = $this->container->get('keyvalue')->get(HearMeNodeAudioQueue::STORE_COLLECTION);
     $nodeAudioQueue = $this->container->get('hear_me.node_audio_queue');
 
-    $this->assertTrue($nodeAudioQueue->queueItem($item));
-    $this->assertFalse($nodeAudioQueue->queueItem($item));
-    $firstToken = $this->container->get('state')->get($stateKey)['token'];
-    $firstAttemptToken = $nodeAudioQueue->reserveSynthesisAttempt(123, $contentHash, $firstToken);
-    $this->assertIsString($firstAttemptToken);
-    $this->assertNotSame('', $firstAttemptToken);
-    $this->assertNull($nodeAudioQueue->reserveSynthesisAttempt(123, $contentHash, $firstToken));
-    $this->assertSame(0, $this->container->get('state')->get($stateKey)['attempts']);
-    $expiredReservation = $this->container->get('state')->get($stateKey);
-    $expiredReservation['attempt_started_at'] = \Drupal::time()->getCurrentTime() - 61;
-    $this->container->get('state')->set($stateKey, $expiredReservation);
-    $secondAttemptToken = $nodeAudioQueue->reserveSynthesisAttempt(123, $contentHash, $firstToken);
-    $this->assertIsString($secondAttemptToken);
-    $this->assertNotSame($firstAttemptToken, $secondAttemptToken);
-    $this->assertFalse($nodeAudioQueue->completeSynthesisAttempt(123, $contentHash, $firstToken, $firstAttemptToken));
-    $this->assertSame(0, $nodeAudioQueue->recordSynthesisFailure(123, $contentHash, $firstToken, $firstAttemptToken));
-    $nodeAudioQueue->clearQueuedHash(123, $contentHash, $firstToken, $firstAttemptToken);
-    $this->assertTrue($nodeAudioQueue->isCurrentQueueItem(123, $contentHash, $firstToken));
-    $this->assertNull($nodeAudioQueue->reserveSynthesisAttempt(123, $contentHash, $firstToken));
-    $this->assertSame(1, $nodeAudioQueue->recordSynthesisFailure(123, $contentHash, $firstToken, $secondAttemptToken));
-    $thirdAttemptToken = $nodeAudioQueue->reserveSynthesisAttempt(123, $contentHash, $firstToken);
-    $this->assertIsString($thirdAttemptToken);
-    $this->assertTrue($nodeAudioQueue->completeSynthesisAttempt(123, $contentHash, $firstToken, $thirdAttemptToken));
-    $this->assertSame(1, $this->container->get('state')->get($stateKey)['attempts']);
+    $this->assertSame(HearMeNodeAudioQueue::RESULT_QUEUED, $nodeAudioQueue->queueItem($item));
+    $this->assertSame(HearMeNodeAudioQueue::RESULT_DUPLICATE, $nodeAudioQueue->queueItem($item));
+    $firstToken = $store->get($storeKey)['token'];
+    $this->assertSame(1, $nodeAudioQueue->recordSynthesisFailure(123, $contentHash, $firstToken));
+    $expiredMarker = $store->get($storeKey);
+    $expiredMarker['queued_at'] = \Drupal::time()->getRequestTime() - 86401;
+    $store->set($storeKey, $expiredMarker);
 
-    $this->container->get('state')->set($stateKey, [
-      'attempts' => 2,
-      'queued_at' => \Drupal::time()->getRequestTime() - 86401,
-      'token' => $firstToken,
-    ]);
-
-    $this->assertTrue($nodeAudioQueue->queueItem($item));
-    $secondToken = $this->container->get('state')->get($stateKey)['token'];
+    $this->assertSame(HearMeNodeAudioQueue::RESULT_QUEUED, $nodeAudioQueue->queueItem($item));
+    $secondToken = $store->get($storeKey)['token'];
     $this->assertNotSame($firstToken, $secondToken);
     $this->assertFalse($nodeAudioQueue->isCurrentQueueItem(123, $contentHash, $firstToken));
     $this->assertTrue($nodeAudioQueue->isCurrentQueueItem(123, $contentHash, $secondToken));
+    $this->assertSame(0, $nodeAudioQueue->recordSynthesisFailure(123, $contentHash, $firstToken));
     $nodeAudioQueue->clearQueuedHash(123, $contentHash, $firstToken);
     $this->assertTrue($nodeAudioQueue->isCurrentQueueItem(123, $contentHash, $secondToken));
+    $this->assertSame(1, $nodeAudioQueue->recordSynthesisFailure(123, $contentHash, $secondToken));
+    $this->assertSame(2, $nodeAudioQueue->recordSynthesisFailure(123, $contentHash, $secondToken));
+    $this->assertSame(3, $nodeAudioQueue->recordSynthesisFailure(123, $contentHash, $secondToken));
+    $this->assertFalse($store->has($storeKey));
     $this->assertSame(2, \Drupal::queue('hear_me_tts')->numberOfItems());
   }
 
   /**
-   * Tests lock-protected marker checks bypass stale State API values.
+   * Tests a stale owner cannot mutate a newer marker.
    */
-  public function testQueueMarkerOwnershipBypassesStateRequestCache(): void {
+  public function testStaleQueueOwnerCannotMutateNewerMarker(): void {
     $contentHash = str_repeat('c', 64);
-    $stateKey = 'hear_me.queued_hash.456.' . $contentHash;
-    $queueToken = 'shared-queue-token';
-    $state = $this->container->get('state');
-    $state->set($stateKey, [
-      'attempt_started_at' => \Drupal::time()->getCurrentTime(),
-      'attempt_token' => 'stale-attempt-token',
-      'attempts' => 0,
+    $storeKey = '456.' . $contentHash;
+    $store = $this->container->get('keyvalue')->get(HearMeNodeAudioQueue::STORE_COLLECTION);
+    $marker = [
+      'content_hash' => $contentHash,
+      'failures' => 1,
+      'nid' => 456,
+      'published_at' => \Drupal::time()->getCurrentTime(),
       'queued_at' => \Drupal::time()->getRequestTime(),
-      'token' => $queueToken,
-    ]);
-    $this->assertSame('stale-attempt-token', $state->get($stateKey)['attempt_token']);
-
-    $stateStore = $this->container->get('keyvalue')->get('state');
-    $freshMarker = $stateStore->get($stateKey);
-    $freshMarker['attempt_token'] = 'fresh-attempt-token';
-    $stateStore->set($stateKey, $freshMarker);
+      'token' => 'new-owner-token',
+    ];
+    $store->set($storeKey, $marker);
 
     $nodeAudioQueue = $this->container->get('hear_me.node_audio_queue');
-    $this->assertFalse($nodeAudioQueue->completeSynthesisAttempt(456, $contentHash, $queueToken, 'stale-attempt-token'));
-    $nodeAudioQueue->clearQueuedHash(456, $contentHash, $queueToken, 'stale-attempt-token');
-    $this->assertSame('fresh-attempt-token', $stateStore->get($stateKey)['attempt_token']);
+    $this->assertSame(0, $nodeAudioQueue->recordSynthesisFailure(456, $contentHash, 'old-owner-token'));
+    $nodeAudioQueue->clearQueuedHash(456, $contentHash, 'old-owner-token');
+    $this->assertSame($marker, $store->get($storeKey));
+  }
+
+  /**
+   * Tests a reclaimed item cannot replace a later completed attachment.
+   */
+  public function testReclaimedQueueItemCannotReplaceLaterCompletion(): void {
+    $this->createContentType('article', 'Article');
+    $this->createAudioReferenceField('article');
+    $this->config('hear_me.settings')
+      ->set('provider', 'test')
+      ->set('queue_bundles', ['article'])
+      ->set('tts_audio_field', 'field_tts_audio')
+      ->save();
+    $node = Node::create([
+      'type' => 'article',
+      'title' => 'Reclaimed queue source',
+      'status' => 1,
+    ]);
+    $node->save();
+    $queuedItem = \Drupal::queue('hear_me_tts')->claimItem();
+    $this->assertIsObject($queuedItem);
+
+    $earlyMedia = $this->createAudioMedia('public://tts/reclaimed-early.wav', 'Early worker audio');
+    $laterMedia = $this->createAudioMedia('public://tts/reclaimed-later.wav', 'Later worker audio');
+    $this->markMediaAsGenerated($earlyMedia, 'Reclaimed queue source');
+    $this->markMediaAsGenerated($laterMedia, 'Reclaimed queue source');
+    $nodeAudioQueue = $this->container->get('hear_me.node_audio_queue');
+    $worker = NULL;
+    $calls = 0;
+    $ttsService = $this->createMock(HearMeService::class);
+    $ttsService->expects($this->exactly(2))
+      ->method('synthesize')
+      ->willReturnCallback(function () use (&$calls, &$worker, $queuedItem, $earlyMedia, $laterMedia): MediaInterface {
+        $calls++;
+        if ($calls === 1) {
+          $worker->processItem($queuedItem->data);
+          return $earlyMedia;
+        }
+        return $laterMedia;
+      });
+    $worker = new HearMeQueueWorker(
+      [],
+      'hear_me_tts',
+      [],
+      $ttsService,
+      $this->container->get('hear_me.node_audio_attacher'),
+      $nodeAudioQueue,
+      $this->container->get('hear_me.provider_resolver'),
+    );
+
+    $worker->processItem($queuedItem->data);
+
+    $this->assertSame((int) $laterMedia->id(), (int) $this->reloadNode($node)->get('field_tts_audio')->target_id);
+    $this->assertNull(Media::load($earlyMedia->id()));
+    $this->assertNotNull(Media::load($laterMedia->id()));
+    $this->assertFalse($nodeAudioQueue->isCurrentQueueItem(
+      (int) $queuedItem->data['nid'],
+      (string) $queuedItem->data['content_hash'],
+      (string) $queuedItem->data['token'],
+    ));
+  }
+
+  /**
+   * Tests anonymous field denial excludes source text and its hash input.
+   */
+  public function testQueueSourceExcludesAnonymousDeniedField(): void {
+    $this->createContentType('article', 'Article');
+    $this->createSourceField('article', 'field_public_source', 'string', 'Public source');
+    $this->createSourceField('article', 'field_private_source', 'string', 'Private source');
+    $node = Node::create([
+      'type' => 'article',
+      'title' => 'Unused title',
+      'status' => 1,
+      'field_public_source' => 'Public source',
+      'field_private_source' => 'DENIED SENTINEL',
+    ]);
+    $node->save();
+    $this->config('hear_me.settings')
+      ->set('queue_bundles', ['article'])
+      ->set('queue_source_fields', [
+        'article' => [
+          'title' => FALSE,
+          'fields' => ['field_public_source:value', 'field_private_source:value'],
+        ],
+      ])
+      ->save();
+    $this->container->get('state')->set('hear_me_test.denied_anonymous_field', 'field_private_source');
+
+    $nodeAudioQueue = $this->container->get('hear_me.node_audio_queue');
+    $item = $nodeAudioQueue->buildQueueItem($node);
+
+    $this->assertIsArray($item);
+    $this->assertSame('Public source', $item['text']);
+    $this->assertStringNotContainsString('DENIED SENTINEL', $item['text']);
+    $this->assertSame(
+      $nodeAudioQueue->buildContentHash('Public source', 'en', $item['source_config_hash']),
+      $item['content_hash'],
+    );
   }
 
   /**

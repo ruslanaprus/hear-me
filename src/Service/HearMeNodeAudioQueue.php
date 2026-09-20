@@ -15,7 +15,6 @@ use Drupal\Core\Lock\LockBackendInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\Core\Queue\QueueFactory;
 use Drupal\Core\Session\AnonymousUserSession;
-use Drupal\Core\State\StateInterface;
 use Drupal\node\NodeInterface;
 
 /**
@@ -37,13 +36,21 @@ class HearMeNodeAudioQueue {
 
   private const QUEUED_MARKER_TTL = 86400;
 
-  private const SYNTHESIS_RESERVATION_TTL = 60;
+  private const PROCESSING_LOCK_TTL = 300.0;
 
-  public const MAX_SYNTHESIS_ATTEMPTS = 3;
+  public const STORE_COLLECTION = 'hear_me.node_audio_queue';
+
+  public const RESULT_QUEUED = 'queued';
+
+  public const RESULT_DUPLICATE = 'duplicate';
+
+  public const RESULT_FAILED = 'failed';
+
+  public const MAX_SYNTHESIS_FAILURES = 3;
 
   protected \Psr\Log\LoggerInterface $logger;
 
-  protected KeyValueStoreInterface $stateStore;
+  protected KeyValueStoreInterface $queueStore;
 
   public function __construct(
     protected ConfigFactoryInterface $configFactory,
@@ -51,23 +58,22 @@ class HearMeNodeAudioQueue {
     protected HearMeInputValidator $inputValidator,
     protected EntityTypeManagerInterface $entityTypeManager,
     protected QueueFactory $queueFactory,
-    protected StateInterface $state,
     KeyValueFactoryInterface $keyValueFactory,
     protected LockBackendInterface $lock,
     protected TimeInterface $time,
     LoggerChannelFactoryInterface $loggerFactory,
   ) {
     $this->logger = $loggerFactory->get('hear_me');
-    $this->stateStore = $keyValueFactory->get('state');
+    $this->queueStore = $keyValueFactory->get(self::STORE_COLLECTION);
   }
 
   /**
    * Queues audio generation for an enrolled node.
    */
-  public function queueNode(EntityInterface $entity): bool {
+  public function queueNode(EntityInterface $entity): ?string {
     $queueItem = $this->buildQueueItem($entity);
     if ($queueItem === NULL) {
-      return FALSE;
+      return NULL;
     }
 
     return $this->queueItem($queueItem);
@@ -76,69 +82,100 @@ class HearMeNodeAudioQueue {
   /**
    * Adds a prebuilt node audio item to the queue.
    */
-  public function queueItem(array $queueItem): bool {
-    $stateKey = $this->getQueuedHashStateKey($queueItem);
-    if ($stateKey === NULL) {
-      return FALSE;
+  public function queueItem(array $queueItem): string {
+    $storeKey = $this->getQueueStoreKey($queueItem);
+    if ($storeKey === NULL) {
+      return self::RESULT_FAILED;
     }
-    $storedItem = [
-      'nid' => (int) ($queueItem['nid'] ?? 0),
-      'content_hash' => (string) ($queueItem['content_hash'] ?? ''),
-      'token' => bin2hex(random_bytes(16)),
-    ];
 
-    $lockName = 'hear_me.queue_hash.' . hash('sha256', $stateKey);
+    $lockName = $this->getMarkerLockName($storeKey);
     if (!$this->lock->acquire($lockName, 30.0)) {
-      return FALSE;
+      $this->lock->wait($lockName, 1);
+      if (!$this->lock->acquire($lockName, 30.0)) {
+        return self::RESULT_FAILED;
+      }
     }
 
     try {
-      $marker = $this->stateStore->get($stateKey, FALSE);
-      if (is_array($marker) && (int) ($marker['queued_at'] ?? 0) > $this->time->getRequestTime() - self::QUEUED_MARKER_TTL) {
-        return FALSE;
+      $marker = $this->queueStore->get($storeKey, FALSE);
+      if (is_array($marker)
+        && (int) ($marker['queued_at'] ?? 0) > $this->time->getRequestTime() - self::QUEUED_MARKER_TTL) {
+        if ((int) ($marker['published_at'] ?? 0) > 0) {
+          return self::RESULT_DUPLICATE;
+        }
+        return $this->publishMarker($storeKey, $marker);
       }
 
-      $this->state->set($stateKey, [
-        'attempt_started_at' => 0,
-        'attempt_token' => '',
-        'attempts' => 0,
+      $marker = [
+        'content_hash' => (string) ($queueItem['content_hash'] ?? ''),
+        'failures' => 0,
+        'nid' => (int) ($queueItem['nid'] ?? 0),
+        'published_at' => 0,
         'queued_at' => $this->time->getRequestTime(),
-        'token' => $storedItem['token'],
-      ]);
-      try {
-        if ($this->queueFactory->get('hear_me_tts')->createItem($storedItem) === FALSE) {
-          $this->clearReservationIfOwned($stateKey, $storedItem['token']);
-          return FALSE;
-        }
-      }
-      catch (\Throwable $e) {
-        $this->clearReservationIfOwned($stateKey, $storedItem['token']);
-        throw $e;
-      }
+        'token' => bin2hex(random_bytes(16)),
+      ];
+      $this->queueStore->set($storeKey, $marker);
+      return $this->publishMarker($storeKey, $marker);
     }
     finally {
       $this->lock->release($lockName);
     }
+  }
 
-    return TRUE;
+  /**
+   * Republishes pending markers left by queue-backend failures.
+   */
+  public function repairPendingPublications(int $limit = 100): int {
+    $published = 0;
+    $checked = 0;
+    foreach ($this->queueStore->getAll() as $storeKey => $marker) {
+      if ($checked >= $limit) {
+        break;
+      }
+      if (!is_array($marker) || (int) ($marker['published_at'] ?? 0) > 0) {
+        continue;
+      }
+      $checked++;
+
+      $lockName = $this->getMarkerLockName((string) $storeKey);
+      if (!$this->lock->acquire($lockName, 30.0)) {
+        continue;
+      }
+      try {
+        $current = $this->queueStore->get((string) $storeKey, FALSE);
+        if (!is_array($current)
+          || (int) ($current['published_at'] ?? 0) > 0
+          || !hash_equals((string) ($current['token'] ?? ''), (string) ($marker['token'] ?? ''))) {
+          continue;
+        }
+        if ($this->publishMarker((string) $storeKey, $current) === self::RESULT_QUEUED) {
+          $published++;
+        }
+      }
+      finally {
+        $this->lock->release($lockName);
+      }
+    }
+
+    return $published;
   }
 
   /**
    * Clears the pending marker for a processed or discarded queue item.
    */
-  public function clearQueuedHash(int $nid, string $contentHash, string $token, ?string $attemptToken = NULL): void {
-    $stateKey = $this->buildQueuedHashStateKey($nid, $contentHash);
-    if ($stateKey === NULL || $token === '') {
+  public function clearQueuedHash(int $nid, string $contentHash, string $token): void {
+    $storeKey = $this->buildQueueStoreKey($nid, $contentHash);
+    if ($storeKey === NULL || $token === '') {
       return;
     }
 
-    $lockName = 'hear_me.queue_hash.' . hash('sha256', $stateKey);
+    $lockName = $this->getMarkerLockName($storeKey);
     if (!$this->lock->acquire($lockName, 30.0)) {
       throw new LockAcquiringException('HearMe queue state is busy.');
     }
 
     try {
-      $this->clearReservationIfOwned($stateKey, $token, $attemptToken);
+      $this->clearMarkerIfOwned($storeKey, $token);
     }
     finally {
       $this->lock->release($lockName);
@@ -149,56 +186,44 @@ class HearMeNodeAudioQueue {
    * Checks whether a token still owns the active marker for a queued hash.
    */
   public function isCurrentQueueItem(int $nid, string $contentHash, string $token): bool {
-    $stateKey = $this->buildQueuedHashStateKey($nid, $contentHash);
-    if ($stateKey === NULL || $token === '') {
+    $storeKey = $this->buildQueueStoreKey($nid, $contentHash);
+    if ($storeKey === NULL || $token === '') {
       return FALSE;
     }
 
-    $marker = $this->stateStore->get($stateKey, []);
+    $marker = $this->queueStore->get($storeKey, []);
     return is_array($marker) && hash_equals((string) ($marker['token'] ?? ''), $token);
   }
 
   /**
-   * Reserves one synthesis attempt for the current queue item.
+   * Runs and completes one owned persistent side effect under the marker lock.
    *
-   * @return string|null
-   *   An attempt-specific token, an empty string for a stale or exhausted item,
-   *   or NULL when lock contention requires a delayed retry.
+   * @param callable(): bool $operation
+   *   The idempotent persistent operation.
+   *
+   * @return bool|null
+   *   The operation result, FALSE for a stale item, or NULL on lock contention.
    */
-  public function reserveSynthesisAttempt(int $nid, string $contentHash, string $token): ?string {
-    $stateKey = $this->buildQueuedHashStateKey($nid, $contentHash);
-    if ($stateKey === NULL || $token === '') {
-      return '';
+  public function processCurrentQueueItem(int $nid, string $contentHash, string $token, callable $operation): ?bool {
+    $storeKey = $this->buildQueueStoreKey($nid, $contentHash);
+    if ($storeKey === NULL || $token === '') {
+      return FALSE;
     }
 
-    $lockName = 'hear_me.queue_hash.' . hash('sha256', $stateKey);
-    if (!$this->lock->acquire($lockName, 30.0)) {
+    $lockName = $this->getMarkerLockName($storeKey);
+    if (!$this->lock->acquire($lockName, self::PROCESSING_LOCK_TTL)) {
       return NULL;
     }
 
     try {
-      $value = $this->stateStore->get($stateKey, []);
-      if (!is_array($value) || !hash_equals((string) ($value['token'] ?? ''), $token)) {
-        return '';
+      $marker = $this->queueStore->get($storeKey, []);
+      if (!is_array($marker) || !hash_equals((string) ($marker['token'] ?? ''), $token)) {
+        return FALSE;
       }
-      $attempts = (int) ($value['attempts'] ?? 0);
-      if ($attempts >= self::MAX_SYNTHESIS_ATTEMPTS) {
-        $this->state->delete($stateKey);
-        return '';
-      }
-      $now = $this->time->getCurrentTime();
-      if ((int) ($value['attempt_started_at'] ?? 0) > $now - self::SYNTHESIS_RESERVATION_TTL) {
-        return NULL;
-      }
-      $attemptToken = bin2hex(random_bytes(16));
-      $this->state->set($stateKey, [
-        'attempt_started_at' => $now,
-        'attempt_token' => $attemptToken,
-        'attempts' => $attempts,
-        'queued_at' => (int) ($value['queued_at'] ?? $this->time->getRequestTime()),
-        'token' => $token,
-      ]);
-      return $attemptToken;
+
+      $result = $operation();
+      $this->clearMarkerIfOwned($storeKey, $token);
+      return $result;
     }
     finally {
       $this->lock->release($lockName);
@@ -206,42 +231,35 @@ class HearMeNodeAudioQueue {
   }
 
   /**
-   * Records one failed reserved synthesis attempt.
+   * Records one confirmed synthesis failure for the current queue item.
    *
    * @return int|null
    *   The failure count, zero for a stale item, or NULL on lock contention.
    */
-  public function recordSynthesisFailure(int $nid, string $contentHash, string $token, string $attemptToken): ?int {
-    $stateKey = $this->buildQueuedHashStateKey($nid, $contentHash);
-    if ($stateKey === NULL || $token === '') {
+  public function recordSynthesisFailure(int $nid, string $contentHash, string $token): ?int {
+    $storeKey = $this->buildQueueStoreKey($nid, $contentHash);
+    if ($storeKey === NULL || $token === '') {
       return 0;
     }
 
-    $lockName = 'hear_me.queue_hash.' . hash('sha256', $stateKey);
+    $lockName = $this->getMarkerLockName($storeKey);
     if (!$this->lock->acquire($lockName, 30.0)) {
       return NULL;
     }
 
     try {
-      $value = $this->stateStore->get($stateKey, []);
-      if (!is_array($value)
-        || !hash_equals((string) ($value['token'] ?? ''), $token)
-        || !hash_equals((string) ($value['attempt_token'] ?? ''), $attemptToken)) {
+      $value = $this->queueStore->get($storeKey, []);
+      if (!is_array($value) || !hash_equals((string) ($value['token'] ?? ''), $token)) {
         return 0;
       }
-      if ((int) ($value['attempt_started_at'] ?? 0) <= 0) {
-        return 0;
+      $failures = (int) ($value['failures'] ?? 0) + 1;
+      if ($failures >= self::MAX_SYNTHESIS_FAILURES) {
+        $this->queueStore->delete($storeKey);
+        return $failures;
       }
-      $attempts = (int) ($value['attempts'] ?? 0) + 1;
-      if ($attempts >= self::MAX_SYNTHESIS_ATTEMPTS) {
-        $this->state->delete($stateKey);
-        return $attempts;
-      }
-      $value['attempt_started_at'] = 0;
-      $value['attempt_token'] = '';
-      $value['attempts'] = $attempts;
-      $this->state->set($stateKey, $value);
-      return $attempts;
+      $value['failures'] = $failures;
+      $this->queueStore->set($storeKey, $value);
+      return $failures;
     }
     finally {
       $this->lock->release($lockName);
@@ -249,101 +267,100 @@ class HearMeNodeAudioQueue {
   }
 
   /**
-   * Completes a successful synthesis reservation for the current item.
+   * Publishes one stored marker and records successful backend acceptance.
    */
-  public function completeSynthesisAttempt(int $nid, string $contentHash, string $token, string $attemptToken): bool {
-    $stateKey = $this->buildQueuedHashStateKey($nid, $contentHash);
-    if ($stateKey === NULL || $token === '') {
-      return FALSE;
-    }
-
-    $lockName = 'hear_me.queue_hash.' . hash('sha256', $stateKey);
-    if (!$this->lock->acquire($lockName, 30.0)) {
-      throw new LockAcquiringException('HearMe synthesis attempt state is busy.');
-    }
-
+  private function publishMarker(string $storeKey, array $marker): string {
+    $storedItem = [
+      'nid' => (int) ($marker['nid'] ?? 0),
+      'content_hash' => (string) ($marker['content_hash'] ?? ''),
+      'token' => (string) ($marker['token'] ?? ''),
+    ];
     try {
-      $value = $this->stateStore->get($stateKey, []);
-      if (!is_array($value)
-        || !hash_equals((string) ($value['token'] ?? ''), $token)
-        || !hash_equals((string) ($value['attempt_token'] ?? ''), $attemptToken)) {
-        return FALSE;
+      $itemId = $this->queueFactory->get('hear_me_tts')->createItem($storedItem);
+    }
+    catch (\Throwable $e) {
+      $current = $this->refreshOwnedMarkerLock($storeKey, $storedItem['token']);
+      if (is_array($current)) {
+        $current['queued_at'] = $this->time->getCurrentTime();
+        $this->queueStore->set($storeKey, $current);
       }
-      $value['attempt_started_at'] = 0;
-      $value['attempt_token'] = '';
-      $this->state->set($stateKey, $value);
-      return TRUE;
+      $this->logger->error('HearMe: queue backend failed to publish audio generation for node @nid (@type).', [
+        '@nid' => $storedItem['nid'],
+        '@type' => $e::class,
+      ]);
+      return self::RESULT_FAILED;
     }
-    finally {
-      $this->lock->release($lockName);
+    if ($itemId === FALSE) {
+      $current = $this->refreshOwnedMarkerLock($storeKey, $storedItem['token']);
+      if (is_array($current)) {
+        $current['queued_at'] = $this->time->getCurrentTime();
+        $this->queueStore->set($storeKey, $current);
+      }
+      $this->logger->error('HearMe: queue backend rejected audio generation for node @nid.', [
+        '@nid' => $storedItem['nid'],
+      ]);
+      return self::RESULT_FAILED;
     }
+
+    $current = $this->refreshOwnedMarkerLock($storeKey, $storedItem['token']);
+    if (!is_array($current)) {
+      return self::RESULT_FAILED;
+    }
+    $current['published_at'] = $this->time->getCurrentTime();
+    $this->queueStore->set($storeKey, $current);
+    return self::RESULT_QUEUED;
   }
 
   /**
-   * Refreshes a reservation immediately before its persistent side effect.
-   *
-   * @return bool|null
-   *   TRUE when the attempt still owns the marker, FALSE when stale, or NULL
-   *   when lock contention requires a delayed retry.
+   * Renews the marker lock and reloads its value without replacing a new owner.
    */
-  public function refreshSynthesisAttempt(int $nid, string $contentHash, string $token, string $attemptToken): ?bool {
-    $stateKey = $this->buildQueuedHashStateKey($nid, $contentHash);
-    if ($stateKey === NULL || $token === '' || $attemptToken === '') {
-      return FALSE;
-    }
-
-    $lockName = 'hear_me.queue_hash.' . hash('sha256', $stateKey);
-    if (!$this->lock->acquire($lockName, 30.0)) {
+  private function refreshOwnedMarkerLock(string $storeKey, string $token): ?array {
+    if (!$this->lock->acquire($this->getMarkerLockName($storeKey), 30.0)) {
       return NULL;
     }
-
-    try {
-      $value = $this->stateStore->get($stateKey, []);
-      if (!is_array($value)
-        || !hash_equals((string) ($value['token'] ?? ''), $token)
-        || !hash_equals((string) ($value['attempt_token'] ?? ''), $attemptToken)) {
-        return FALSE;
-      }
-      $value['attempt_started_at'] = $this->time->getCurrentTime();
-      $this->state->set($stateKey, $value);
-      return TRUE;
+    $current = $this->queueStore->get($storeKey, FALSE);
+    if (!is_array($current) || !hash_equals((string) ($current['token'] ?? ''), $token)) {
+      return NULL;
     }
-    finally {
-      $this->lock->release($lockName);
+    return $current;
+  }
+
+  /**
+   * Removes a marker only while its token still owns it.
+   */
+  private function clearMarkerIfOwned(string $storeKey, string $token): void {
+    $marker = $this->queueStore->get($storeKey, []);
+    if (is_array($marker) && hash_equals((string) ($marker['token'] ?? ''), $token)) {
+      $this->queueStore->delete($storeKey);
     }
   }
 
   /**
-   * Removes a queue reservation only while its token still owns the marker.
+   * Builds the collection key for a queue item.
    */
-  private function clearReservationIfOwned(string $stateKey, string $token, ?string $attemptToken = NULL): void {
-    $marker = $this->stateStore->get($stateKey, []);
-    if (is_array($marker)
-      && hash_equals((string) ($marker['token'] ?? ''), $token)
-      && ($attemptToken === NULL || hash_equals((string) ($marker['attempt_token'] ?? ''), $attemptToken))) {
-      $this->state->delete($stateKey);
-    }
-  }
-
-  /**
-   * Builds the state key for a queue item, if it supports de-duplication.
-   */
-  protected function getQueuedHashStateKey(array $queueItem): ?string {
-    return $this->buildQueuedHashStateKey(
+  protected function getQueueStoreKey(array $queueItem): ?string {
+    return $this->buildQueueStoreKey(
       (int) ($queueItem['nid'] ?? 0),
       (string) ($queueItem['content_hash'] ?? ''),
     );
   }
 
   /**
-   * Builds the state key for a node/hash pending queue marker.
+   * Builds the collection key for a node/hash pending queue marker.
    */
-  protected function buildQueuedHashStateKey(int $nid, string $contentHash): ?string {
+  protected function buildQueueStoreKey(int $nid, string $contentHash): ?string {
     if ($nid <= 0 || $contentHash === '') {
       return NULL;
     }
 
-    return 'hear_me.queued_hash.' . $nid . '.' . $contentHash;
+    return $nid . '.' . $contentHash;
+  }
+
+  /**
+   * Builds the marker lock name for one collection key.
+   */
+  private function getMarkerLockName(string $storeKey): string {
+    return 'hear_me.queue_hash.' . hash('sha256', $storeKey);
   }
 
   /**

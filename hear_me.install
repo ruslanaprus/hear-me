@@ -1,6 +1,7 @@
 <?php
 
 use Drupal\Core\File\FileSystemInterface;
+use Drupal\hear_me\Service\HearMeNodeAudioQueue;
 use Drupal\hear_me\Service\TtsCacheManager;
 
 /**
@@ -30,14 +31,8 @@ function hear_me_uninstall(): void {
   \Drupal::service('hear_me.cache_manager')->clearRuntimeCache();
   \Drupal::queue('hear_me_tts')->deleteQueue();
   \Drupal::queue('hear_me_generated_audio_cleanup')->deleteQueue();
+  \Drupal::keyValue(HearMeNodeAudioQueue::STORE_COLLECTION)->deleteAll();
   \Drupal::keyValue('hear_me.generated_audio_cleanup')->deleteAll();
-
-  $state = \Drupal::keyValue('state');
-  $queuedHashKeys = array_filter(
-    array_keys($state->getAll()),
-    static fn(string $key): bool => str_starts_with($key, 'hear_me.queued_hash.'),
-  );
-  $state->deleteMultiple($queuedHashKeys);
   \Drupal::state()->delete('hear_me.provider_connection_test');
 }
 

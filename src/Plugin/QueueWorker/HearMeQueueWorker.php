@@ -98,27 +98,18 @@ class HearMeQueueWorker extends QueueWorkerBase implements ContainerFactoryPlugi
       return;
     }
 
-    $attemptToken = $this->nodeAudioQueue->reserveSynthesisAttempt($nid, $queuedHash, $token);
-    if ($attemptToken === NULL) {
-      throw new DelayedRequeueException(60, 'HearMe queue state is busy; the queue item will be retried.');
-    }
-    if ($attemptToken === '') {
-      return;
-    }
-
     try {
       $media = $this->ttsService->synthesize($current['text'], $current['lang'], $providerId);
     }
     catch (PersistentSynthesisUnavailableException $e) {
-      $this->releaseSynthesisAttempt($nid, $queuedHash, $token, $attemptToken);
       throw new DelayedRequeueException(60, 'HearMe could not persist synthesized audio; the queue item will be retried.', 0, $e);
     }
     if (!$media) {
-      $failures = $this->nodeAudioQueue->recordSynthesisFailure($nid, $queuedHash, $token, $attemptToken);
+      $failures = $this->nodeAudioQueue->recordSynthesisFailure($nid, $queuedHash, $token);
       if ($failures === NULL) {
         throw new DelayedRequeueException(60, 'HearMe queue state is busy; the queue item will be retried.');
       }
-      if ($failures === 0 || $failures >= HearMeNodeAudioQueue::MAX_SYNTHESIS_ATTEMPTS) {
+      if ($failures === 0 || $failures >= HearMeNodeAudioQueue::MAX_SYNTHESIS_FAILURES) {
         return;
       }
       throw new DelayedRequeueException(60, 'HearMe synthesis failed; the queue item will be retried.');
@@ -127,49 +118,29 @@ class HearMeQueueWorker extends QueueWorkerBase implements ContainerFactoryPlugi
     $latest = $this->nodeAudioQueue->buildCurrentQueueItem($nid, $providerId);
     if ($latest !== NULL && hash_equals($latest['content_hash'], $queuedHash)) {
       try {
-        if (!$this->nodeAudioAttacher->attach($nid, $media, $queuedHash, $token, $attemptToken)) {
+        if (!$this->nodeAudioAttacher->attach($nid, $media, $queuedHash, $token)) {
           $this->nodeAudioAttacher->cleanupOrphanedGeneratedAudio($media);
         }
       }
       catch (LockAcquiringException $e) {
-        $this->releaseSynthesisAttempt($nid, $queuedHash, $token, $attemptToken);
         throw new DelayedRequeueException(60, 'HearMe generated media is busy; the queue item will be retried.', 0, $e);
       }
       catch (EntityStorageException $e) {
-        $this->releaseSynthesisAttempt($nid, $queuedHash, $token, $attemptToken);
         throw new DelayedRequeueException(60, 'HearMe generated media changed; the queue item will be retried.', 0, $e);
       }
-    }
-    else {
-      $this->nodeAudioAttacher->cleanupOrphanedGeneratedAudio($media);
+      return;
     }
 
-    $this->clearQueuedHash($nid, $queuedHash, $token, $attemptToken);
+    $this->nodeAudioAttacher->cleanupOrphanedGeneratedAudio($media);
+    $this->clearQueuedHash($nid, $queuedHash, $token);
   }
 
   /**
    * Clears marker ownership without allowing lock contention to lose the job.
    */
-  private function clearQueuedHash(int $nid, string $contentHash, string $token, ?string $attemptToken = NULL): void {
+  private function clearQueuedHash(int $nid, string $contentHash, string $token): void {
     try {
-      if ($attemptToken === NULL) {
-        $this->nodeAudioQueue->clearQueuedHash($nid, $contentHash, $token);
-      }
-      else {
-        $this->nodeAudioQueue->clearQueuedHash($nid, $contentHash, $token, $attemptToken);
-      }
-    }
-    catch (LockAcquiringException $e) {
-      throw new DelayedRequeueException(60, 'HearMe queue state is busy; the queue item will be retried.', 0, $e);
-    }
-  }
-
-  /**
-   * Releases a successful reservation when a local handoff must be retried.
-   */
-  private function releaseSynthesisAttempt(int $nid, string $contentHash, string $token, string $attemptToken): void {
-    try {
-      $this->nodeAudioQueue->completeSynthesisAttempt($nid, $contentHash, $token, $attemptToken);
+      $this->nodeAudioQueue->clearQueuedHash($nid, $contentHash, $token);
     }
     catch (LockAcquiringException $e) {
       throw new DelayedRequeueException(60, 'HearMe queue state is busy; the queue item will be retried.', 0, $e);

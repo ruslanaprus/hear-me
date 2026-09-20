@@ -30,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Formatted queue source items now run through their stored Drupal text formats as an anonymous visitor before plain-text normalization and hashing. Filtered-out values cannot reach synthesis, empty/unavailable formats and filter failures fail closed without raw-text fallback, and plain string fields keep their direct path.
 - Simplified queue ownership to one durable generation token and a module-owned key-value collection, removed attempt leases, separated queued/duplicate/failed publication outcomes, and added cron repair for retained backend-publication failures.
 - Reviewed and froze the intended first-release queue, generated-Media, Piper security, uninstall, and optional Drush contracts; unresolved release blockers are documented for separate verification gates.
 

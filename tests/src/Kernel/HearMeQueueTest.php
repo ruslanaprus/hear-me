@@ -7,6 +7,7 @@ namespace Drupal\Tests\hear_me\Kernel;
 use Drupal\field\Entity\FieldConfig;
 use Drupal\field\Entity\FieldStorageConfig;
 use Drupal\file\Entity\File;
+use Drupal\filter\Entity\FilterFormat;
 use Drupal\hear_me\Plugin\QueueWorker\HearMeGeneratedAudioCleanupWorker;
 use Drupal\hear_me\Plugin\QueueWorker\HearMeQueueWorker;
 use Drupal\hear_me\Service\HearMeExistingContentQueue;
@@ -29,6 +30,7 @@ use Drupal\Core\Queue\QueueInterface;
 use Drupal\hear_me\Exception\PersistentSynthesisUnavailableException;
 use Drupal\Core\Session\AccountInterface;
 use Drupal\Core\Session\AnonymousUserSession;
+use Drupal\Core\Session\UserSession;
 use Drupal\Tests\content_moderation\Traits\ContentModerationTestTrait;
 use Drupal\user\Entity\Role;
 use PHPUnit\Framework\Attributes\Group;
@@ -829,6 +831,8 @@ class HearMeQueueTest extends EntityKernelTestBase {
       $this->container->get('keyvalue'),
       $this->container->get('lock'),
       $this->container->get('datetime.time'),
+      $this->container->get('renderer'),
+      $this->container->get('account_switcher'),
       $this->container->get('logger.factory'),
     );
     $contentHash = str_repeat('1', 64);
@@ -890,6 +894,8 @@ class HearMeQueueTest extends EntityKernelTestBase {
       $this->container->get('keyvalue'),
       $lock,
       $this->container->get('datetime.time'),
+      $this->container->get('renderer'),
+      $this->container->get('account_switcher'),
       $this->container->get('logger.factory'),
     );
 
@@ -984,6 +990,8 @@ class HearMeQueueTest extends EntityKernelTestBase {
       $this->container->get('keyvalue'),
       $this->container->get('lock'),
       $this->container->get('datetime.time'),
+      $this->container->get('renderer'),
+      $this->container->get('account_switcher'),
       $this->container->get('logger.factory'),
     );
     $this->container->set('hear_me.node_audio_queue', $nodeAudioQueue);
@@ -1747,6 +1755,7 @@ class HearMeQueueTest extends EntityKernelTestBase {
     $this->createContentType('article', 'Article');
     $this->createSourceField('article', 'field_summary_source', 'text_with_summary', 'Summary source');
     $this->createSourceField('article', 'field_intro_source', 'string', 'Intro source');
+    $this->createQueueSourceTestFormat('hear_me_source');
 
     $node = Node::create([
       'type' => 'article',
@@ -1755,6 +1764,7 @@ class HearMeQueueTest extends EntityKernelTestBase {
       'field_summary_source' => [
         'value' => '<p>Body value</p>',
         'summary' => 'Body summary',
+        'format' => 'hear_me_source',
       ],
       'field_intro_source' => 'Intro value',
     ]);
@@ -1789,6 +1799,158 @@ class HearMeQueueTest extends EntityKernelTestBase {
     ])->save();
     $item = $this->container->get('hear_me.node_audio_queue')->buildQueueItem($node);
     $this->assertSame('Body value Body summary Intro value', $item['text']);
+  }
+
+  /**
+   * Tests formatted queue sources use anonymous filtered output and hashes.
+   */
+  public function testFormattedQueueSourcesUseAnonymousFilteredOutput(): void {
+    $this->createContentType('article', 'Article');
+    $this->createSourceField('article', 'field_formatted_source', 'text_with_summary', 'Formatted source');
+    $this->createSourceField('article', 'field_plain_source', 'string', 'Plain source');
+    $this->createQueueSourceTestFormat('hear_me_filtered');
+
+    $node = Node::create([
+      'type' => 'article',
+      'title' => 'Unused title',
+      'status' => 1,
+      'field_formatted_source' => [
+        'value' => '<p>Public body</p><private>BODY SENTINEL</private>',
+        'summary' => '<p>Public summary</p><private>SUMMARY SENTINEL</private>',
+        'format' => 'hear_me_filtered',
+      ],
+      'field_plain_source' => 'Plain source',
+    ]);
+    $node->save();
+    $this->config('hear_me.settings')
+      ->set('queue_bundles', ['article'])
+      ->set('queue_source_fields', [
+        'article' => [
+          'title' => FALSE,
+          'fields' => [
+            'field_formatted_source:value',
+            'field_formatted_source:summary',
+            'field_plain_source:value',
+          ],
+        ],
+      ])
+      ->save();
+
+    $currentUser = $this->container->get('current_user');
+    $currentUser->setAccount(new UserSession([
+      'uid' => 1,
+      'name' => 'queue administrator',
+      'roles' => [AccountInterface::AUTHENTICATED_ROLE],
+    ]));
+    $format = FilterFormat::load('hear_me_filtered');
+    $this->assertNotNull($format);
+    $this->assertFalse($format->access('use', new AnonymousUserSession()));
+    $nodeAudioQueue = $this->container->get('hear_me.node_audio_queue');
+
+    $item = $nodeAudioQueue->buildQueueItem($node);
+
+    $this->assertIsArray($item);
+    $this->assertSame('Public body Public summary Plain source', $item['text']);
+    $this->assertStringNotContainsString('SENTINEL', $item['text']);
+    $this->assertSame(
+      $nodeAudioQueue->buildContentHash($item['text'], 'en', $item['source_config_hash']),
+      $item['content_hash'],
+    );
+    $this->assertNotSame(
+      $nodeAudioQueue->buildContentHash('Public body BODY SENTINEL Public summary SUMMARY SENTINEL Plain source', 'en', $item['source_config_hash']),
+      $item['content_hash'],
+    );
+    $this->assertSame(1, $currentUser->id());
+
+    $node->set('field_formatted_source', [
+      'value' => '<p>Public body</p><private>CHANGED BODY SENTINEL</private>',
+      'summary' => '<p>Public summary</p><private>CHANGED SUMMARY SENTINEL</private>',
+      'format' => 'hear_me_filtered',
+    ]);
+    $changedItem = $nodeAudioQueue->buildQueueItem($node);
+    $this->assertIsArray($changedItem);
+    $this->assertSame($item['text'], $changedItem['text']);
+    $this->assertSame($item['content_hash'], $changedItem['content_hash']);
+  }
+
+  /**
+   * Tests unavailable formatted sources never fall back to raw stored text.
+   */
+  public function testUnavailableFormattedQueueSourcesFailClosed(): void {
+    $this->createContentType('article', 'Article');
+    $this->createSourceField('article', 'field_missing_format', 'text_long', 'Missing format');
+    $this->createSourceField('article', 'field_empty_format', 'text_long', 'Empty format');
+    $this->createSourceField('article', 'field_disabled_format', 'text_long', 'Disabled format');
+    $this->createSourceField('article', 'field_failed_filter', 'text_long', 'Failed filter');
+    $this->createSourceField('article', 'field_safe_source', 'string_long', 'Safe source');
+    $this->createQueueSourceTestFormat('hear_me_disabled', FALSE);
+    $this->createQueueSourceTestFormat('hear_me_failed');
+
+    $node = Node::create([
+      'type' => 'article',
+      'title' => 'Unused title',
+      'status' => 1,
+      'field_missing_format' => [
+        'value' => 'MISSING FORMAT SENTINEL',
+        'format' => 'hear_me_missing',
+      ],
+      'field_empty_format' => [
+        'value' => 'EMPTY FORMAT SENTINEL',
+        'format' => NULL,
+      ],
+      'field_disabled_format' => [
+        'value' => 'DISABLED FORMAT SENTINEL',
+        'format' => 'hear_me_disabled',
+      ],
+      'field_failed_filter' => [
+        'value' => 'FAILED FILTER SENTINEL',
+        'format' => 'hear_me_failed',
+      ],
+      'field_safe_source' => 'Safe plain source',
+    ]);
+    $node->save();
+    $settings = $this->config('hear_me.settings')
+      ->set('queue_bundles', ['article']);
+    $this->container->get('state')->set('hear_me_test.throw_queue_source_filter', TRUE);
+    $currentUser = $this->container->get('current_user');
+    $currentUser->setAccount(new UserSession([
+      'uid' => 1,
+      'name' => 'queue administrator',
+      'roles' => [AccountInterface::AUTHENTICATED_ROLE],
+    ]));
+    $nodeAudioQueue = $this->container->get('hear_me.node_audio_queue');
+
+    $settings->set('queue_source_fields', [
+      'article' => [
+        'title' => FALSE,
+        'fields' => [
+          'field_missing_format:value',
+          'field_empty_format:value',
+          'field_disabled_format:value',
+          'field_failed_filter:value',
+          'field_safe_source:value',
+        ],
+      ],
+    ])->save();
+    $item = $nodeAudioQueue->buildQueueItem($node);
+    $this->assertIsArray($item);
+    $this->assertSame('Safe plain source', $item['text']);
+    $this->assertStringNotContainsString('SENTINEL', $item['text']);
+    $this->assertSame(1, $currentUser->id());
+
+    $settings->set('queue_source_fields', [
+      'article' => [
+        'title' => FALSE,
+        'fields' => [
+          'field_missing_format:value',
+          'field_empty_format:value',
+          'field_disabled_format:value',
+          'field_failed_filter:value',
+        ],
+      ],
+    ])->save();
+    $this->assertNull($nodeAudioQueue->buildQueueItem($node));
+    $this->assertSame(1, $currentUser->id());
   }
 
   /**
@@ -2291,6 +2453,24 @@ class HearMeQueueTest extends EntityKernelTestBase {
         'label' => $label,
       ])->save();
     }
+  }
+
+  /**
+   * Creates the formatted-text filter used by queue source tests.
+   */
+  protected function createQueueSourceTestFormat(string $id, bool $status = TRUE): void {
+    FilterFormat::create([
+      'format' => $id,
+      'name' => $id,
+      'status' => $status,
+      'filters' => [
+        'hear_me_test_queue_source' => [
+          'status' => TRUE,
+          'weight' => 0,
+          'settings' => [],
+        ],
+      ],
+    ])->save();
   }
 
   /**

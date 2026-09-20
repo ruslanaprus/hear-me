@@ -54,6 +54,8 @@ services:
       - '@keyvalue'
       - '@lock'
       - '@datetime.time'
+      - '@renderer'
+      - '@account_switcher'
       - '@logger.factory'
 
   # Shared validator for node audio fields used by queue generation.

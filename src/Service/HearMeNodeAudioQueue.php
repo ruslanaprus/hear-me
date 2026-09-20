@@ -14,6 +14,8 @@ use Drupal\Core\Lock\LockAcquiringException;
 use Drupal\Core\Lock\LockBackendInterface;
 use Drupal\Core\Logger\LoggerChannelFactoryInterface;
 use Drupal\Core\Queue\QueueFactory;
+use Drupal\Core\Render\RendererInterface;
+use Drupal\Core\Session\AccountSwitcherInterface;
 use Drupal\Core\Session\AnonymousUserSession;
 use Drupal\node\NodeInterface;
 
@@ -61,6 +63,8 @@ class HearMeNodeAudioQueue {
     KeyValueFactoryInterface $keyValueFactory,
     protected LockBackendInterface $lock,
     protected TimeInterface $time,
+    protected RendererInterface $renderer,
+    protected AccountSwitcherInterface $accountSwitcher,
     LoggerChannelFactoryInterface $loggerFactory,
   ) {
     $this->logger = $loggerFactory->get('hear_me');
@@ -579,9 +583,53 @@ class HearMeNodeAudioQueue {
       return '';
     }
 
+    $field = $entity->get($parsed['field']);
+    $fieldType = $entity->getFieldDefinition($parsed['field'])->getType();
     $parts = [];
-    foreach ($entity->get($parsed['field']) as $item) {
-      $parts[] = (string) ($item->{$parsed['property']} ?? '');
+    if (in_array($fieldType, ['string', 'string_long'], TRUE)) {
+      foreach ($field as $item) {
+        $parts[] = (string) ($item->{$parsed['property']} ?? '');
+      }
+      return implode(' ', $parts);
+    }
+
+    $switchedAccount = FALSE;
+    try {
+      $this->accountSwitcher->switchTo($anonymousUser);
+      $switchedAccount = TRUE;
+      foreach ($field as $delta => $item) {
+        $formatId = $item->format;
+        if (!is_string($formatId) || trim($formatId) === '') {
+          $this->logger->warning('HearMe: skipped formatted queue source @field for node @nid because item @delta has no stored text format.', [
+            '@field' => $parsed['field'],
+            '@nid' => $entity->id(),
+            '@delta' => $delta,
+          ]);
+          return '';
+        }
+        $build = [
+          '#type' => 'processed_text',
+          '#text' => (string) ($item->{$parsed['property']} ?? ''),
+          '#format' => $formatId,
+          '#filter_types_to_skip' => [],
+          '#langcode' => $item->getLangcode(),
+        ];
+        $parts[] = (string) $this->renderer->renderInIsolation($build);
+      }
+    }
+    catch (\Throwable $e) {
+      $this->logger->warning('HearMe: skipped formatted queue source @field for node @nid because item @delta could not be processed (@type).', [
+        '@field' => $parsed['field'],
+        '@nid' => $entity->id(),
+        '@delta' => $delta ?? 0,
+        '@type' => $e::class,
+      ]);
+      return '';
+    }
+    finally {
+      if ($switchedAccount) {
+        $this->accountSwitcher->switchBack();
+      }
     }
 
     return implode(' ', $parts);

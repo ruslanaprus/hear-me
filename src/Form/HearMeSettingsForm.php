@@ -1069,7 +1069,7 @@ class HearMeSettingsForm extends ConfigFormBase {
       '#title' => $this->t('Queue source fields'),
       '#open' => FALSE,
       '#tree' => TRUE,
-      '#description' => $this->t('Choose which stored node fields are used for queue-generated audio. Existing configurations default to title plus body text until saved here. Supported field types: plain text, long text, formatted text, and text with summary.'),
+      '#description' => $this->t('Choose which stored node fields are used for queue-generated audio. Existing configurations default to title plus body text until saved here. Supported field types: plain text, long text, formatted text, and text with summary. Formatted values are filtered as anonymous visitors before conversion to plain text; unavailable values are omitted.'),
     ];
 
     if (!$bundleOptions) {

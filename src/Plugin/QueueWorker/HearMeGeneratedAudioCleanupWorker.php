@@ -28,9 +28,9 @@ final class HearMeGeneratedAudioCleanupWorker extends QueueWorkerBase implements
     array $configuration,
     $plugin_id,
     $plugin_definition,
-    protected readonly EntityTypeManagerInterface $entityTypeManager,
-    protected readonly NodeAudioAttacher $nodeAudioAttacher,
-    protected readonly TtsCacheManager $cacheManager,
+    protected EntityTypeManagerInterface $entityTypeManager,
+    protected NodeAudioAttacher $nodeAudioAttacher,
+    protected TtsCacheManager $cacheManager,
   ) {
     parent::__construct($configuration, $plugin_id, $plugin_definition);
   }

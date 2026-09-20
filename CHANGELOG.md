@@ -57,6 +57,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The TTS endpoint now requires a JSON media type, uses a bounded request-body read, and rejects structured values where strings are required.
 - The optional Drush command uses attribute discovery and no longer supports queueing unpublished content; Drush 13.7 minimum-version discovery and execution remain a pre-release verification blocker.
 
+### Fixed
+
+- Cleanup queue worker dependency serialization remains compatible with the supported PHP 8.3 minimum.
+
 ### Security
 
 - TTS endpoint requires the `use tts playback` permission and a CSRF request header token.
